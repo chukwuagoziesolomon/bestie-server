@@ -2,10 +2,15 @@ services:
   - type: web
     name: bestyy
     env: python
+    rootDir: bestyy
     buildCommand: pip install -r requirements.txt
-    startCommand: cd bestyy && gunicorn bestyy.wsgi:application
+    startCommand: gunicorn bestyy.wsgi:application
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
       - key: WEB_CONCURRENCY
         value: 4
+      - key: PORT
+        value: 8000
+      - key: DJANGO_SETTINGS_MODULE
+        value: bestyy.settings
