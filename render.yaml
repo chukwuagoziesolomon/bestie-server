@@ -1,10 +1,11 @@
 services:
   - type: web
-    name: bestyy
+    name: bestie-server
     env: python
-    rootDir: bestyy
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn bestyy.wsgi:application
+    buildCommand: |
+      cp -r bestyy/* .
+      pip install -r requirements.txt
+    startCommand: gunicorn bestyy.wsgi:application --bind=0.0.0.0:$PORT
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
