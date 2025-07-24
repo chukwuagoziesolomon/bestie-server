@@ -2,10 +2,9 @@ services:
   - type: web
     name: bestie-server
     env: python
-    buildCommand: |
-      ln -s bestyy/manage.py manage.py
-      pip install -r requirements.txt
-    startCommand: python manage.py runserver 0.0.0.0:$PORT
+    rootDir: bestyy
+    buildCommand: pip install -r requirements.txt
+    startCommand: cd bestyy && gunicorn --bind 0.0.0.0:$PORT bestyy.wsgi:application
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
