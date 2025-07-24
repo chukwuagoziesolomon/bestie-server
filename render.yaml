@@ -2,8 +2,9 @@ services:
   - type: web
     name: bestyy
     env: python
-    rootDir: bestyy
-    buildCommand: pip install -r requirements.txt
+    buildCommand: |
+      cp -r bestyy/* .
+      pip install -r requirements.txt
     startCommand: gunicorn bestyy.wsgi:application
     envVars:
       - key: PYTHON_VERSION
@@ -14,3 +15,5 @@ services:
         value: 8000
       - key: DJANGO_SETTINGS_MODULE
         value: bestyy.settings
+      - key: PYTHONPATH
+        value: .
