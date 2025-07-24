@@ -2,12 +2,9 @@ services:
   - type: web
     name: bestyy
     env: python
-    buildCommand: |
-      pip install -r requirements.txt
-      mkdir -p /opt/render/project/src
-      cp -r bestyy/* /opt/render/project/src/
-      cd /opt/render/project/src
-    startCommand: cd /opt/render/project/src && gunicorn bestyy.wsgi:application
+    rootDir: bestyy
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn bestyy.wsgi:application
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
