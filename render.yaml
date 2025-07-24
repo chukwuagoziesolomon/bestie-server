@@ -3,7 +3,7 @@ services:
     name: bestie-server
     env: python
     buildCommand: pip install -r bestyy/requirements.txt
-    startCommand: gunicorn --chdir bestyy bestyy.wsgi:application
+    startCommand: cd bestyy && python manage.py runserver 0.0.0.0:$PORT
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
