@@ -94,9 +94,12 @@ TEMPLATES = [
 WSGI_APPLICATION = 'bestyy.wsgi.application'
 
 
+from decouple import config
+import dj_database_url
+
 DATABASES = {
     'default': dj_database_url.parse(
-        config('DATABASE_URL', default='postgresql://postgres:Frank08037@localhost:5432/bestyy_db')
+        str(config('DATABASE_URL', default='postgresql://postgres:Frank08037@localhost:5432/bestyy_db'))
     )
 }
 
