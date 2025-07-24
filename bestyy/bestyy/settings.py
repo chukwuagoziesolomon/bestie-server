@@ -34,6 +34,8 @@ ALLOWED_HOSTS = [
     "127.0.0.1",
     "bestyy-server.onrender.com",
     ".onrender.com"
+     "https://your-vercel-project-name.vercel.app",
+    "http://localhost:3000",
 ]
 
 
