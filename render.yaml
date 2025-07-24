@@ -3,8 +3,8 @@ services:
     name: bestyy
     env: python
     buildCommand: |
+      pip install -r bestyy/requirements.txt
       cp -r bestyy/* .
-      pip install -r requirements.txt
     startCommand: gunicorn bestyy.wsgi:application
     envVars:
       - key: PYTHON_VERSION
