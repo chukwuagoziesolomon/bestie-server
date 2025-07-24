@@ -2,9 +2,13 @@ services:
   - type: web
     name: bestie-server
     env: python
-    rootDir: bestyy
     buildCommand: pip install -r requirements.txt
-    startCommand: cd bestyy && gunicorn --bind 0.0.0.0:$PORT bestyy.wsgi:application
+    startCommand: gunicorn --bind=0.0.0.0:8000 bestyy.wsgi:application
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: DJANGO_SETTINGS_MODULE
+        value: bestyy.settings
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
