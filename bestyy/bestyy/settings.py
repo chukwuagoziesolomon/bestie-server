@@ -177,13 +177,7 @@ CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = ['*']
 CORS_ALLOW_METHODS = ['*']
 
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'  # or os.path.join(BASE_DIR, 'media')
-
-# Cloudinary configuration using environment variables
-import os
-from decouple import config
-
+# Media files configuration
 # Read from secret files (Render's /etc/secrets/ directory)
 def read_secret_file(filename):
     try:
@@ -193,10 +187,28 @@ def read_secret_file(filename):
         return None
 
 # Cloudinary configuration for django-cloudinary-storage
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
+
 CLOUDINARY_STORAGE = {
     'CLOUD_NAME': read_secret_file('CLOUDINARY_CLOUD_NAME') or config('CLOUDINARY_CLOUD_NAME', default=''),
     'API_KEY': read_secret_file('CLOUDINARY_API_KEY') or config('CLOUDINARY_API_KEY', default=''),
     'API_SECRET': read_secret_file('CLOUDINARY_API_SECRET') or config('CLOUDINARY_API_SECRET', default=''),
 }
 
-DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
+# Configure Cloudinary
+cloudinary.config(
+    cloud_name=CLOUDINARY_STORAGE['CLOUD_NAME'],
+    api_key=CLOUDINARY_STORAGE['API_KEY'],
+    api_secret=CLOUDINARY_STORAGE['API_SECRET'],
+    secure=True
+)
+
+# Use Cloudinary for media storage in production
+if not DEBUG:  # Production settings
+    DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
+    MEDIA_URL = '/media/'  # This will be handled by Cloudinary
+else:  # Development settings
+    MEDIA_URL = '/media/'
+    MEDIA_ROOT = BASE_DIR / 'media'
