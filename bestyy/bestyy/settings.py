@@ -102,6 +102,7 @@ import dj_database_url
 DATABASES = {
     'default': dj_database_url.parse(
         str(config('DATABASE_URL', default='postgresql://postgres:Frank08037@localhost:5432/bestyy_db'))
+    )
 }
 
 # Password validation
