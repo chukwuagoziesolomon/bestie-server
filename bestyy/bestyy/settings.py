@@ -60,8 +60,7 @@ INSTALLED_APPS = [
     'dj_rest_auth.registration',
     'corsheaders',
     'analytics',
-    'cloudinary_storage',
-    'cloudinary',
+    'storages',
 ]
 
 MIDDLEWARE = [
@@ -187,9 +186,7 @@ def read_secret_file(filename):
         return None
 
 # Cloudinary configuration for django-cloudinary-storage
-import cloudinary
-import cloudinary.uploader
-import cloudinary.api
+# Removed Cloudinary imports; using boto3/S3 via Supabase
 
 # Get Cloudinary credentials
 CLOUDINARY_CLOUD_NAME = str(read_secret_file('CLOUDINARY_CLOUD_NAME') or config('CLOUDINARY_CLOUD_NAME', default=''))
@@ -220,5 +217,24 @@ cloudinary.config(
     secure=True
 )
 
-DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
-print("🔧 FORCING Cloudinary for all uploads")
+# === Supabase Storage via django-storages ===
+INSTALLED_APPS += ['storages']
+
+SUPABASE_URL = os.getenv('SUPABASE_URL', '')
+SUPABASE_KEY = os.getenv('SUPABASE_SERVICE_KEY', '')
+SUPABASE_BUCKET = 'media'  # change if your bucket name differs
+
+DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+
+AWS_ACCESS_KEY_ID = SUPABASE_KEY
+AWS_SECRET_ACCESS_KEY = SUPABASE_KEY
+AWS_STORAGE_BUCKET_NAME = SUPABASE_BUCKET
+AWS_S3_REGION_NAME = 'us-east-1'  # arbitrary; Supabase ignores
+AWS_S3_ENDPOINT_URL = f'{SUPABASE_URL}/storage/v1'
+AWS_S3_ADDRESSING_STYLE = 'path'
+AWS_S3_SIGNATURE_VERSION = 's3v4'
+AWS_DEFAULT_ACL = None
+
+# Public URL base for served objects
+MEDIA_URL = f'{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/'
+print('✅ Supabase storage configured')
