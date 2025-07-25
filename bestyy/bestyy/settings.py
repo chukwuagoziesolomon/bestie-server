@@ -192,9 +192,9 @@ import cloudinary.uploader
 import cloudinary.api
 
 # Get Cloudinary credentials
-CLOUDINARY_CLOUD_NAME = read_secret_file('CLOUDINARY_CLOUD_NAME') or config('CLOUDINARY_CLOUD_NAME', default='')
-CLOUDINARY_API_KEY = read_secret_file('CLOUDINARY_API_KEY') or config('CLOUDINARY_API_KEY', default='')
-CLOUDINARY_API_SECRET = read_secret_file('CLOUDINARY_API_SECRET') or config('CLOUDINARY_API_SECRET', default='')
+CLOUDINARY_CLOUD_NAME = str(read_secret_file('CLOUDINARY_CLOUD_NAME') or config('CLOUDINARY_CLOUD_NAME', default=''))
+CLOUDINARY_API_KEY = str(read_secret_file('CLOUDINARY_API_KEY') or config('CLOUDINARY_API_KEY', default=''))
+CLOUDINARY_API_SECRET = str(read_secret_file('CLOUDINARY_API_SECRET') or config('CLOUDINARY_API_SECRET', default=''))
 
 # Debug output (remove after testing)
 print("=== CLOUDINARY DEBUG ===")
