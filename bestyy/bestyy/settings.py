@@ -227,9 +227,9 @@ if CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET:
     print("✅ Using Cloudinary for media storage")
 else:
     # Development or fallback
-    MEDIA_URL = '/media/'
     MEDIA_ROOT = BASE_DIR / 'media'
     print("⚠️ Using local media storage (Cloudinary credentials missing)")
 
-# Always set MEDIA_URL (Cloudinary will override it automatically)
-MEDIA_URL = '/media/'
+# In development we need MEDIA_URL; in production Cloudinary handles URLs
+if DEBUG or not DEFAULT_FILE_STORAGE.startswith('cloudinary'):
+    MEDIA_URL = '/media/'
