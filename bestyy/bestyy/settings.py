@@ -185,7 +185,7 @@ def read_secret_file(filename):
     except Exception:
         return None
 
-# Cloudinary configuration for django-cloudinary-storage
+# (Cloudinary section removed)
 # Removed Cloudinary imports; using boto3/S3 via Supabase
 
 # Get Cloudinary credentials
@@ -194,7 +194,7 @@ CLOUDINARY_API_KEY = str(read_secret_file('CLOUDINARY_API_KEY') or config('CLOUD
 CLOUDINARY_API_SECRET = str(read_secret_file('CLOUDINARY_API_SECRET') or config('CLOUDINARY_API_SECRET', default=''))
 
 # Debug output (remove after testing)
-print("=== CLOUDINARY DEBUG ===")
+print("# removed cloudinary debug")
 print(f"CLOUDINARY_CLOUD_NAME: '{CLOUDINARY_CLOUD_NAME}'")
 print(f"CLOUDINARY_API_KEY: '{CLOUDINARY_API_KEY}'")
 if CLOUDINARY_API_SECRET:
@@ -210,7 +210,7 @@ CLOUDINARY_STORAGE = {
 }
 
 # Configure Cloudinary
-cloudinary.config(
+# cloudinary removed
     cloud_name=CLOUDINARY_CLOUD_NAME,
     api_key=CLOUDINARY_API_KEY,
     api_secret=CLOUDINARY_API_SECRET,
