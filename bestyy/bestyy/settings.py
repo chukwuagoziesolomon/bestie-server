@@ -181,9 +181,22 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'  # or os.path.join(BASE_DIR, 'media')
 
 # Cloudinary configuration using environment variables
-DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
+import os
+from decouple import config
+
+# Read from secret files (Render's /etc/secrets/ directory)
+def read_secret_file(filename):
+    try:
+        with open(f'/etc/secrets/{filename}', 'r') as f:
+            return f.read().strip()
+    except Exception:
+        return None
+
+# Cloudinary configuration for django-cloudinary-storage
 CLOUDINARY_STORAGE = {
-    'CLOUD_NAME': config('CLOUDINARY_CLOUD_NAME'),
-    'API_KEY': config('CLOUDINARY_API_KEY'),
-    'API_SECRET': config('CLOUDINARY_API_SECRET'),
+    'CLOUD_NAME': read_secret_file('CLOUDINARY_CLOUD_NAME') or config('CLOUDINARY_CLOUD_NAME', default=''),
+    'API_KEY': read_secret_file('CLOUDINARY_API_KEY') or config('CLOUDINARY_API_KEY', default=''),
+    'API_SECRET': read_secret_file('CLOUDINARY_API_SECRET') or config('CLOUDINARY_API_SECRET', default=''),
 }
+
+DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
