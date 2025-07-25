@@ -191,24 +191,29 @@ import cloudinary
 import cloudinary.uploader
 import cloudinary.api
 
+# Get Cloudinary credentials
+CLOUDINARY_CLOUD_NAME = read_secret_file('CLOUDINARY_CLOUD_NAME') or config('CLOUDINARY_CLOUD_NAME', default='')
+CLOUDINARY_API_KEY = read_secret_file('CLOUDINARY_API_KEY') or config('CLOUDINARY_API_KEY', default='')
+CLOUDINARY_API_SECRET = read_secret_file('CLOUDINARY_API_SECRET') or config('CLOUDINARY_API_SECRET', default='')
+
 CLOUDINARY_STORAGE = {
-    'CLOUD_NAME': read_secret_file('CLOUDINARY_CLOUD_NAME') or config('CLOUDINARY_CLOUD_NAME', default=''),
-    'API_KEY': read_secret_file('CLOUDINARY_API_KEY') or config('CLOUDINARY_API_KEY', default=''),
-    'API_SECRET': read_secret_file('CLOUDINARY_API_SECRET') or config('CLOUDINARY_API_SECRET', default=''),
+    'CLOUD_NAME': CLOUDINARY_CLOUD_NAME,
+    'API_KEY': CLOUDINARY_API_KEY,
+    'API_SECRET': CLOUDINARY_API_SECRET,
 }
 
 # Configure Cloudinary
 cloudinary.config(
-    cloud_name=CLOUDINARY_STORAGE['CLOUD_NAME'],
-    api_key=CLOUDINARY_STORAGE['API_KEY'],
-    api_secret=CLOUDINARY_STORAGE['API_SECRET'],
+    cloud_name=CLOUDINARY_CLOUD_NAME,
+    api_key=CLOUDINARY_API_KEY,
+    api_secret=CLOUDINARY_API_SECRET,
     secure=True
 )
 
-# Use Cloudinary for media storage in production
-if not DEBUG:  # Production settings
+# Media storage configuration
+if not DEBUG and CLOUDINARY_CLOUD_NAME:  # Production with Cloudinary
     DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
-    MEDIA_URL = '/media/'  # This will be handled by Cloudinary
-else:  # Development settings
+    # Don't set MEDIA_URL for Cloudinary - it handles URLs automatically
+else:  # Development or fallback
     MEDIA_URL = '/media/'
     MEDIA_ROOT = BASE_DIR / 'media'
