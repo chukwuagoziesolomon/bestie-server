@@ -185,11 +185,10 @@ def read_secret_file(filename):
     except Exception:
         return None
 
-INSTALLED_APPS += ['storages']
 
 SUPABASE_URL = os.getenv('SUPABASE_URL', '')
 SUPABASE_KEY = os.getenv('SUPABASE_SERVICE_KEY', '')
-SUPABASE_BUCKET = 'media'  # change if your bucket name differs
+SUPABASE_BUCKET = 'bestyy'
 
 DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
 
@@ -203,7 +202,6 @@ AWS_S3_SIGNATURE_VERSION = 's3v4'
 AWS_DEFAULT_ACL = None
 
 # Public URL base for served objects
-SUPABASE_BUCKET = 'bestyy'
 
 MEDIA_URL = f'{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/'
 print('✅ Supabase storage configured')
