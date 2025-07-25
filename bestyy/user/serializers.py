@@ -34,9 +34,7 @@ class UserSerializer(serializers.ModelSerializer):
         # Password match
         if data['password'] != data['confirm_password']:
             raise serializers.ValidationError({"password": "Passwords do not match."})
-        # Unique email
-        if User.objects.filter(email=data['email']).exists():
-            raise serializers.ValidationError({"email": "A user with this email already exists."})
+        # Removed unique email validation to allow multi-role registration
         return data
 
     def create(self, validated_data):
@@ -109,12 +107,10 @@ class VendorProfileSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         user_data = validated_data.pop('user')
         email = user_data.get('email')
-        
-        # Find existing user or create a new one
         user, created = User.objects.get_or_create(
             email=email,
             defaults={
-                'username': user_data.get('username'),
+                'username': user_data.get('username', email),
                 'first_name': user_data.get('first_name', ''),
                 'last_name': user_data.get('last_name', '')
             }
@@ -122,10 +118,8 @@ class VendorProfileSerializer(serializers.ModelSerializer):
         if created:
             user.set_password(user_data.get('password'))
             user.save()
-            
         if VendorProfile.objects.filter(user=user).exists():
             raise serializers.ValidationError({'user': 'A vendor profile with this email already exists.'})
-            
         vendor_profile = VendorProfile.objects.create(user=user, **validated_data)
         return vendor_profile
 
@@ -165,11 +159,10 @@ class CourierProfileSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         user_data = validated_data.pop('user')
         email = user_data.get('email')
-        
         user, created = User.objects.get_or_create(
             email=email,
             defaults={
-                'username': user_data.get('username'),
+                'username': user_data.get('username', email),
                 'first_name': user_data.get('first_name', ''),
                 'last_name': user_data.get('last_name', '')
             }
@@ -177,10 +170,8 @@ class CourierProfileSerializer(serializers.ModelSerializer):
         if created:
             user.set_password(user_data.get('password'))
             user.save()
-            
         if CourierProfile.objects.filter(user=user).exists():
             raise serializers.ValidationError({'user': 'A courier profile with this email already exists.'})
-
         courier_profile = CourierProfile.objects.create(user=user, **validated_data)
         return courier_profile
 
@@ -195,11 +186,10 @@ class UserProfileSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         user_data = validated_data.pop('user')
         email = user_data.get('email')
-
         user, created = User.objects.get_or_create(
             email=email,
             defaults={
-                'username': user_data.get('username'),
+                'username': user_data.get('username', email),
                 'first_name': user_data.get('first_name', ''),
                 'last_name': user_data.get('last_name', '')
             }
@@ -207,10 +197,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
         if created:
             user.set_password(user_data.get('password'))
             user.save()
-
         if UserProfile.objects.filter(user=user).exists():
             raise serializers.ValidationError({'user': 'A user profile with this email already exists.'})
-
         user_profile = UserProfile.objects.create(user=user, **validated_data)
         return user_profile
 
@@ -225,14 +213,20 @@ class UserSignupSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         user_data = validated_data.pop('user')
         phone_number = validated_data.pop('phone')
-
-        user = User.objects.create_user(
-            username=user_data['username'],
-            email=user_data['email'],
-            password=user_data['password'],
-            first_name=user_data.get('first_name', ''),
-            last_name=user_data.get('last_name', '')
+        email = user_data.get('email')
+        user, created = User.objects.get_or_create(
+            email=email,
+            defaults={
+                'username': user_data.get('username', email),
+                'first_name': user_data.get('first_name', ''),
+                'last_name': user_data.get('last_name', '')
+            }
         )
+        if created:
+            user.set_password(user_data.get('password'))
+            user.save()
+        if UserProfile.objects.filter(user=user).exists():
+            raise serializers.ValidationError({'user': 'A user profile with this email already exists.'})
         user_profile = UserProfile.objects.create(user=user, phone=phone_number, **validated_data)
         return user_profile 
 
