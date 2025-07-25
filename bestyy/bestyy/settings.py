@@ -60,8 +60,8 @@ INSTALLED_APPS = [
     'dj_rest_auth.registration',
     'corsheaders',
     'analytics',
-    'cloudinary',
     'cloudinary_storage',
+    'cloudinary',
 ]
 
 MIDDLEWARE = [
@@ -196,6 +196,16 @@ CLOUDINARY_CLOUD_NAME = read_secret_file('CLOUDINARY_CLOUD_NAME') or config('CLO
 CLOUDINARY_API_KEY = read_secret_file('CLOUDINARY_API_KEY') or config('CLOUDINARY_API_KEY', default='')
 CLOUDINARY_API_SECRET = read_secret_file('CLOUDINARY_API_SECRET') or config('CLOUDINARY_API_SECRET', default='')
 
+# Debug output (remove after testing)
+print("=== CLOUDINARY DEBUG ===")
+print(f"CLOUDINARY_CLOUD_NAME: '{CLOUDINARY_CLOUD_NAME}'")
+print(f"CLOUDINARY_API_KEY: '{CLOUDINARY_API_KEY}'")
+if CLOUDINARY_API_SECRET:
+    print(f"CLOUDINARY_API_SECRET: '{CLOUDINARY_API_SECRET[:10]}...' (truncated)")
+else:
+    print("CLOUDINARY_API_SECRET: (empty)")
+print("========================")
+
 CLOUDINARY_STORAGE = {
     'CLOUD_NAME': CLOUDINARY_CLOUD_NAME,
     'API_KEY': CLOUDINARY_API_KEY,
@@ -210,10 +220,16 @@ cloudinary.config(
     secure=True
 )
 
-# Media storage configuration
-if not DEBUG and CLOUDINARY_CLOUD_NAME:  # Production with Cloudinary
+# Media storage configuration - FIXED VERSION
+if CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET:
+    # Production with Cloudinary
     DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
-    # Don't set MEDIA_URL for Cloudinary - it handles URLs automatically
-else:  # Development or fallback
+    print("✅ Using Cloudinary for media storage")
+else:
+    # Development or fallback
     MEDIA_URL = '/media/'
     MEDIA_ROOT = BASE_DIR / 'media'
+    print("⚠️ Using local media storage (Cloudinary credentials missing)")
+
+# Always set MEDIA_URL (Cloudinary will override it automatically)
+MEDIA_URL = '/media/'
