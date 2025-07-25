@@ -185,7 +185,6 @@ def read_secret_file(filename):
     except Exception:
         return None
 
-INSTALLED_APPS += ['storages']
 
 SUPABASE_URL = os.getenv('SUPABASE_URL', '')
 SUPABASE_KEY = os.getenv('SUPABASE_SERVICE_KEY', '')
