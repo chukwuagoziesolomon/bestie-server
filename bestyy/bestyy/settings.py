@@ -102,7 +102,6 @@ import dj_database_url
 DATABASES = {
     'default': dj_database_url.parse(
         str(config('DATABASE_URL', default='postgresql://postgres:Frank08037@localhost:5432/bestyy_db'))
-    )
 }
 
 # Password validation
@@ -185,39 +184,6 @@ def read_secret_file(filename):
     except Exception:
         return None
 
-# (Cloudinary section removed)
-# Removed Cloudinary imports; using boto3/S3 via Supabase
-
-# Get Cloudinary credentials
-CLOUDINARY_CLOUD_NAME = str(read_secret_file('CLOUDINARY_CLOUD_NAME') or config('CLOUDINARY_CLOUD_NAME', default=''))
-CLOUDINARY_API_KEY = str(read_secret_file('CLOUDINARY_API_KEY') or config('CLOUDINARY_API_KEY', default=''))
-CLOUDINARY_API_SECRET = str(read_secret_file('CLOUDINARY_API_SECRET') or config('CLOUDINARY_API_SECRET', default=''))
-
-# Debug output (remove after testing)
-print("# removed cloudinary debug")
-print(f"CLOUDINARY_CLOUD_NAME: '{CLOUDINARY_CLOUD_NAME}'")
-print(f"CLOUDINARY_API_KEY: '{CLOUDINARY_API_KEY}'")
-if CLOUDINARY_API_SECRET:
-    print(f"CLOUDINARY_API_SECRET: '{CLOUDINARY_API_SECRET[:10]}...' (truncated)")
-else:
-    print("CLOUDINARY_API_SECRET: (empty)")
-print("========================")
-
-CLOUDINARY_STORAGE = {
-    'CLOUD_NAME': CLOUDINARY_CLOUD_NAME,
-    'API_KEY': CLOUDINARY_API_KEY,
-    'API_SECRET': CLOUDINARY_API_SECRET,
-}
-
-# Configure Cloudinary
-# cloudinary removed
-    cloud_name=CLOUDINARY_CLOUD_NAME,
-    api_key=CLOUDINARY_API_KEY,
-    api_secret=CLOUDINARY_API_SECRET,
-    secure=True
-)
-
-# === Supabase Storage via django-storages ===
 INSTALLED_APPS += ['storages']
 
 SUPABASE_URL = os.getenv('SUPABASE_URL', '')
