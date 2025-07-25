@@ -167,6 +167,7 @@ ACCOUNT_EMAIL_VERIFICATION = 'optional'
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "https://bestyy-web.vercel.app",
 ]
 
 # CORS_ALLOW_ALL_ORIGINS = True  # Commented out for security; only allow specified origins
