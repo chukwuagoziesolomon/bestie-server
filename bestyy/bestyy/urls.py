@@ -28,7 +28,3 @@ urlpatterns = [
     path('analytics/', include('analytics.urls')),
     path('orders/vendor/tracking/', VendorOrderTrackingView.as_view(), name='vendor-order-tracking-root'),
 ]
-
-# Serve media files in development only
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
