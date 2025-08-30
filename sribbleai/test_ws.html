@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Test - No Auth</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        #messages {
+            height: 400px;
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin-bottom: 10px;
+            overflow-y: auto;
+        }
+        .message {
+            margin: 5px 0;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        .system { 
+            background-color: #fff3e0;
+            text-align: center;
+            font-style: italic;
+        }
+        .user { 
+            background-color: #e3f2fd;
+            margin-left: 20%;
+            text-align: right;
+        }
+        .bot { 
+            background-color: #f1f1f1;
+            margin-right: 20%;
+        }
+        .error { 
+            background-color: #ffebee;
+            color: #c62828;
+            text-align: center;
+        }
+        #messageInput {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        button {
+            padding: 10px 20px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        #status {
+            margin: 10px 0;
+            padding: 5px;
+            text-align: center;
+            font-weight: bold;
+        }
+        .connected { color: #2e7d32; }
+        .disconnected { color: #c62828; }
+    </style>
+</head>
+<body>
+    <h1>WebSocket Test (No Authentication)</h1>
+    <div id="status" class="disconnected">Disconnected</div>
+    <div id="messages"></div>
+    <div>
+        <input type="text" id="messageInput" placeholder="Type your message...">
+        <button onclick="sendMessage()">Send</button>
+    </div>
+
+    <script>
+        // Generate a random user ID for this session
+        const userId = 'user_' + Math.random().toString(36).substr(2, 9);
+        const messagesDiv = document.getElementById('messages');
+        const messageInput = document.getElementById('messageInput');
+        const statusDiv = document.getElementById('status');
+        let socket;
+        let reconnectAttempts = 0;
+        const MAX_RECONNECT_ATTEMPTS = 5;
+        const RECONNECT_DELAY = 3000; // 3 seconds
+
+        function updateStatus(connected) {
+            statusDiv.textContent = connected ? 'Connected' : 'Disconnected';
+            statusDiv.className = connected ? 'connected' : 'disconnected';
+        }
+
+        function connectWebSocket() {
+            const wsScheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+            const wsPath = `${wsScheme}://${window.location.host}/ws/chat/${userId}/`;
+            
+            console.log('Connecting to:', wsPath);
+            socket = new WebSocket(wsPath);
+
+            socket.onopen = function(e) {
+                console.log('WebSocket connected');
+                updateStatus(true);
+                logMessage('System', 'Connected to chat', 'system');
+                reconnectAttempts = 0; // Reset reconnect attempts on successful connection
+            };
+
+            socket.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('Received message:', data);
+                    
+                    // Handle message types
+                    if (data.type === 'chat_message') {
+                        logMessage(data.sender || 'AI', data.message, 'bot');
+                    } else if (data.type === 'system') {
+                        logMessage('System', data.message, 'system');
+                    } else {
+                        logMessage('Server', event.data, 'system');
+                    }
+                } catch (e) {
+                    console.error('Error parsing message:', e);
+                    logMessage('Error', 'Could not parse message', 'error');
+                }
+            };
+
+            socket.onclose = function(event) {
+                console.log('WebSocket closed:', event);
+                updateStatus(false);
+                logMessage('System', 'Disconnected from server', 'system');
+                
+                // Attempt to reconnect
+                if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                    reconnectAttempts++;
+                    logMessage('System', `Attempting to reconnect (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`, 'system');
+                    setTimeout(connectWebSocket, RECONNECT_DELAY);
+                } else {
+                    logMessage('System', 'Max reconnection attempts reached. Please refresh the page.', 'error');
+                }
+            };
+
+            socket.onerror = function(error) {
+                console.error('WebSocket error:', error);
+                logMessage('System', 'Connection error', 'error');
+            };
+        }
+
+        function sendMessage() {
+            if (!socket || socket.readyState !== WebSocket.OPEN) {
+                logMessage('System', 'Not connected to server', 'error');
+                return;
+            }
+
+            const message = messageInput.value.trim();
+            if (message) {
+                const messageData = {
+                    'type': 'chat_message',
+                    'message': message,
+                    'user_id': userId,
+                    'timestamp': new Date().toISOString()
+                };
+                
+                console.log('Sending message:', messageData);
+                socket.send(JSON.stringify(messageData));
+                logMessage('You', message, 'user');
+                messageInput.value = '';
+            }
+        }
+
+        function logMessage(sender, message, type) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+            const timestamp = new Date().toLocaleTimeString();
+            messageDiv.innerHTML = `[${timestamp}] <strong>${sender}:</strong> ${message}`;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            console.log(`[${type}] ${sender}: ${message}`);
+        }
+
+        // Connect when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            connectWebSocket();
+            
+            // Allow sending with Enter key
+            messageInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    sendMessage();
+                }
+            });
+            
+            // Focus the input field
+            messageInput.focus();
+        });
+    </script>
+</body>
+</html>

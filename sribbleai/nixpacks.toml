@@ -1,0 +1,12 @@
+[phases.setup]
+  nixPkgs = ['python39', 'gcc', 'gcc.libc', 'gcc.libc.dev', 'gcc-unwrapped.lib']
+
+[phases.install]
+  cmds = ["pip install -r requirements.txt"]
+
+[start]
+  cmd = "gunicorn scribbleintimeai.wsgi:application --bind 0.0.0.0:$PORT"
+
+[build]
+  base = "debian:bullseye"
+  builder = "nixpacks"
