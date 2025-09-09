@@ -1,0 +1,154 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls static admin_list %}
+
+{% block extrastyle %}
+    {{ block.super }}
+    <link rel="stylesheet" type="text/css" href="{% static 'admin/css/forms.css' %}">
+    <style>
+        .actions select {
+            width: 150px;
+            margin: 0 5px;
+        }
+        .action-counter {
+            margin: 0 10px;
+            color: #666;
+        }
+        .field-verification_actions {
+            white-space: nowrap;
+        }
+        .field-verification_actions .button {
+            padding: 2px 8px;
+            font-size: 12px;
+            line-height: 1.5;
+            margin-right: 5px;
+        }
+    </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
+    &rsaquo; <a href="{% url 'admin:app_list' app_label='user' %}">User</a>
+    &rsaquo; Courier Profiles
+    &rsaquo; Pending Verifications
+</div>
+{% endblock %}
+
+{% block content %}
+    <div id="content-main">
+        <div class="module" id="changelist">
+            <div class="actions
+                <form method="get" action="">
+                    <label for="searchbar">Search:</label>
+                    <input type="text" size="40" name="q" value="{{ search_query }}" id="searchbar" autofocus>
+                    <input type="submit" value="Search">
+                </form>
+                <p class="paginator">
+                    {% if page_obj.has_previous %}
+                        <a href="?page={{ page_obj.previous_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}" class="prev">« Previous</a>
+                    {% endif %}
+                    <span class="this-page">
+                        Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}.
+                    </span>
+                    {% if page_obj.has_next %}
+                        <a href="?page={{ page_obj.next_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}" class="next">Next »</a>
+                    {% endif %}
+                    <span class="action-counter">{{ total_count }} courier{{ total_count|pluralize }} in total</span>
+                </p>
+            </div>
+
+            <form id="changelist-form" method="post" action="">
+                {% csrf_token %}
+                <div class="results">
+                    <table id="result_list">
+                        <thead>
+                            <tr>
+                                <th scope="col" class="action-checkbox-column">
+                                    <div class="text"><span><input type="checkbox" id="action-toggle"></span></div>
+                                </th>
+                                <th scope="col">Name</th>
+                                <th scope="col">Email</th>
+                                <th scope="col">Phone</th>
+                                <th scope="col">Vehicle Type</th>
+                                <th scope="col">ID Document</th>
+                                <th scope="col">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for courier in couriers %}
+                                <tr class="{% cycle 'row1' 'row2' %}">
+                                    <td class="action-checkbox">
+                                        <input type="checkbox" name="_selected_action" value="{{ courier.id }}" class="action-select">
+                                    </td>
+                                    <td>{{ courier.user.first_name }} {{ courier.user.last_name }}</td>
+                                    <td>{{ courier.user.email }}</td>
+                                    <td>{{ courier.phone }}</td>
+                                    <td>{{ courier.get_vehicle_type_display|default:"Not specified" }}</td>
+                                    <td>
+                                        {% if courier.id_upload %}
+                                            <a href="{{ courier.id_upload.url }}" target="_blank">View ID</a>
+                                        {% else %}
+                                            No ID uploaded
+                                        {% endif %}
+                                    </td>
+                                    <td class="field-verification_actions">
+                                        <a href="{% url 'admin:approve-courier' courier.id %}" class="button" style="background-color: #4CAF50; color: white;">Approve</a>
+                                        <a href="{% url 'admin:reject-courier' courier.id %}" class="button" style="background-color: #f44336; color: white;">Reject</a>
+                                    </td>
+                                </tr>
+                            {% empty %}
+                                <tr>
+                                    <td colspan="7" class="text-center">No pending courier verifications found.</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="actions">
+                    <select name="action" required>
+                        <option value="">---------</option>
+                        <option value="approve">Approve selected couriers</option>
+                        <option value="reject">Reject selected couriers</option>
+                    </select>
+                    <button type="submit" class="button" title="Run the selected action" name="index" value="0">Go</button>
+                    <span class="action-counter">{{ couriers|length }} selected</span>
+                </div>
+            </form>
+        </div>
+    </div>
+{% endblock %}
+
+{% block footer %}
+    {{ block.super }}
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Toggle all checkboxes
+            const actionToggle = document.getElementById('action-toggle');
+            if (actionToggle) {
+                actionToggle.addEventListener('change', function() {
+                    const checkboxes = document.querySelectorAll('input[type=checkbox].action-select');
+                    checkboxes.forEach(checkbox => {
+                        checkbox.checked = actionToggle.checked;
+                    });
+                });
+            }
+            
+            // Update action counter when checkboxes change
+            const checkboxes = document.querySelectorAll('input[type=checkbox].action-select');
+            const actionCounter = document.querySelector('.action-counter');
+            
+            function updateActionCounter() {
+                const checkedCount = document.querySelectorAll('input[type=checkbox].action-select:checked').length;
+                actionCounter.textContent = checkedCount + ' selected';
+            }
+            
+            checkboxes.forEach(checkbox => {
+                checkbox.addEventListener('change', updateActionCounter);
+            });
+            
+            // Initialize counter
+            updateActionCounter();
+        });
+    </script>
+{% endblock %}

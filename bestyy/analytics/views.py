@@ -1,10 +1,13 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.utils import timezone
 from django.db.models import Sum, Avg, F, ExpressionWrapper, DurationField
 from datetime import timedelta
 from user.models import Order
+from .models import Activity
+from .serializers import ActivitySerializer
+from user.utils.websocket_notifications import record_activity
 
 # Vendor Transaction History and Total Earnings API
 class VendorTransactionHistoryView(APIView):
@@ -220,3 +223,47 @@ class DashboardAnalyticsView(APIView):
                 }
             }
         })
+
+
+class RecentActivityView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        limit = int(request.query_params.get('limit', 20))
+        qs = Activity.objects.all()[: max(1, min(100, limit))]
+        serializer = ActivitySerializer(qs, many=True)
+        return Response({
+            'activities': serializer.data
+        })
+
+
+class ActivityWebhookView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        payload = request.data or {}
+        title = payload.get('title') or 'Activity'
+        description = payload.get('description', '')
+        icon = payload.get('icon', '')
+        color = payload.get('color', '')
+        amount = payload.get('amount')
+        target_type = payload.get('target_type', '')
+        target_id = payload.get('target_id', '')
+        metadata = payload.get('metadata') or {}
+
+        activity = record_activity(
+            title=title,
+            description=description,
+            icon=icon,
+            color=color,
+            amount=amount,
+            actor=request.user if getattr(request, 'user', None) and request.user.is_authenticated else None,
+            target_type=target_type,
+            target_id=target_id,
+            metadata=metadata,
+        )
+
+        if activity is None:
+            return Response({'detail': 'Failed to record activity'}, status=500)
+
+        return Response({'id': activity.id}, status=201)

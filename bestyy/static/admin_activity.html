@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - Real-time Activity</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .status {
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status.connected {
+            background-color: #10B981;
+            color: white;
+        }
+        .status.disconnected {
+            background-color: #EF4444;
+            color: white;
+        }
+        .activity-item {
+            display: flex;
+            align-items: center;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            border-left: 4px solid #ddd;
+            background-color: #f9f9f9;
+            animation: slideIn 0.3s ease-in;
+        }
+        .activity-item.new {
+            background-color: #f0f9ff;
+            border-left-color: #3B82F6;
+        }
+        .activity-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 15px;
+            font-size: 18px;
+        }
+        .activity-content {
+            flex: 1;
+        }
+        .activity-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .activity-description {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 5px;
+        }
+        .activity-time {
+            color: #999;
+            font-size: 12px;
+        }
+        .activity-amount {
+            font-weight: bold;
+            color: #10B981;
+        }
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Recent Activities</h1>
+            <div id="connectionStatus" class="status disconnected">Disconnected</div>
+        </div>
+        
+        <div id="activitiesList">
+            <!-- Activities will be added here -->
+        </div>
+    </div>
+
+    <script>
+        let socket;
+        let activities = [];
+
+        function connectWebSocket() {
+            // Connect to WebSocket
+            socket = new WebSocket('ws://127.0.0.1:8000/ws/admin/activity/');
+            
+            socket.onopen = function(e) {
+                console.log('🔥 WebSocket connected!');
+                updateConnectionStatus(true);
+            };
+
+            socket.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                console.log('📨 Received:', data);
+                
+                if (data.type === 'activity_update') {
+                    const payload = data.activity || data.data || data;
+                    addActivity(payload);
+                } else if (data.type === 'connection_established') {
+                    console.log('✅ Connection established:', data.message);
+                }
+            };
+
+            socket.onclose = function(event) {
+                console.log('❌ WebSocket closed');
+                updateConnectionStatus(false);
+                
+                // Reconnect after 3 seconds
+                setTimeout(connectWebSocket, 3000);
+            };
+
+            socket.onerror = function(error) {
+                console.error('🚨 WebSocket error:', error);
+                updateConnectionStatus(false);
+            };
+        }
+
+        function updateConnectionStatus(connected) {
+            const statusEl = document.getElementById('connectionStatus');
+            if (connected) {
+                statusEl.textContent = 'Connected';
+                statusEl.className = 'status connected';
+            } else {
+                statusEl.textContent = 'Disconnected';
+                statusEl.className = 'status disconnected';
+            }
+        }
+
+        function addActivity(activity) {
+            // Add to beginning of activities array
+            activities.unshift(activity);
+            
+            // Keep only last 50 activities
+            if (activities.length > 50) {
+                activities = activities.slice(0, 50);
+            }
+            
+            renderActivities();
+        }
+
+        function renderActivities() {
+            const listEl = document.getElementById('activitiesList');
+            listEl.innerHTML = '';
+            
+            activities.forEach((activity, index) => {
+                const activityEl = createActivityElement(activity, index === 0);
+                listEl.appendChild(activityEl);
+            });
+        }
+
+        function createActivityElement(activity, isNew = false) {
+            const div = document.createElement('div');
+            div.className = `activity-item ${isNew ? 'new' : ''}`;
+            
+            const timeAgo = getTimeAgo(new Date(activity.timestamp));
+            const amount = activity.amount ? `<span class="activity-amount">₦${activity.amount}</span>` : '';
+            
+            div.innerHTML = `
+                <div class="activity-icon" style="background-color: ${activity.color}20; color: ${activity.color}">
+                    ${getIcon(activity.icon)}
+                </div>
+                <div class="activity-content">
+                    <div class="activity-title">${activity.title}</div>
+                    <div class="activity-description">${activity.description} ${amount}</div>
+                    <div class="activity-time">${timeAgo}</div>
+                </div>
+            `;
+            
+            return div;
+        }
+
+        function getIcon(iconName) {
+            const icons = {
+                'shopping-cart': '🛒',
+                'credit-card': '💳',
+                'user-plus': '👤',
+                'store': '🏪'
+            };
+            return icons[iconName] || '📋';
+        }
+
+        function getTimeAgo(date) {
+            const now = new Date();
+            const diff = now - date;
+            const minutes = Math.floor(diff / 60000);
+            
+            if (minutes < 1) return 'Just now';
+            if (minutes < 60) return `${minutes} min${minutes > 1 ? 's' : ''} ago`;
+            
+            const hours = Math.floor(minutes / 60);
+            if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+            
+            const days = Math.floor(hours / 24);
+            return `${days} day${days > 1 ? 's' : ''} ago`;
+        }
+
+        // Load initial activities from REST API
+        async function loadInitialActivities() {
+            try {
+                const response = await fetch('/api/admin/recent-activity/?limit=20', {
+                    headers: {
+                        'Authorization': 'Token YOUR_ADMIN_TOKEN_HERE'
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    activities = data.activities;
+                    renderActivities();
+                }
+            } catch (error) {
+                console.error('Failed to load initial activities:', error);
+            }
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            loadInitialActivities();
+            connectWebSocket();
+        });
+    </script>
+</body>
+</html>

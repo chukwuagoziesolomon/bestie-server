@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - Polling Activity</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .refresh-info {
+            color: #666;
+            font-size: 12px;
+        }
+        .activity-item {
+            display: flex;
+            align-items: center;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            border-left: 4px solid #ddd;
+            background-color: #f9f9f9;
+            transition: all 0.3s ease;
+        }
+        .activity-item.new {
+            background-color: #f0f9ff;
+            border-left-color: #3B82F6;
+            animation: highlight 2s ease-in-out;
+        }
+        .activity-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 15px;
+            font-size: 18px;
+        }
+        .activity-content {
+            flex: 1;
+        }
+        .activity-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .activity-description {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 5px;
+        }
+        .activity-time {
+            color: #999;
+            font-size: 12px;
+        }
+        .activity-amount {
+            font-weight: bold;
+            color: #10B981;
+        }
+        @keyframes highlight {
+            0% { background-color: #fef3c7; }
+            100% { background-color: #f0f9ff; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Recent Activities</h1>
+            <div class="refresh-info">
+                Auto-refresh every <span id="refreshInterval">10</span> seconds
+                <br>
+                Last updated: <span id="lastUpdate">Never</span>
+            </div>
+        </div>
+        
+        <div id="activitiesList">
+            <!-- Activities will be added here -->
+        </div>
+    </div>
+
+    <script>
+        let activities = [];
+        let lastActivityId = null;
+        const REFRESH_INTERVAL = 10000; // 10 seconds
+
+        async function fetchActivities() {
+            try {
+                const response = await fetch('/api/admin/recent-activity/?limit=20', {
+                    headers: {
+                        'Authorization': 'Token YOUR_ADMIN_TOKEN_HERE',
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    const newActivities = data.activities;
+                    
+                    // Check for new activities
+                    const hasNewActivities = checkForNewActivities(newActivities);
+                    
+                    activities = newActivities;
+                    renderActivities(hasNewActivities);
+                    updateLastUpdateTime();
+                    
+                    console.log(`🔄 Fetched ${activities.length} activities`);
+                } else {
+                    console.error('Failed to fetch activities:', response.status);
+                }
+            } catch (error) {
+                console.error('Error fetching activities:', error);
+            }
+        }
+
+        function checkForNewActivities(newActivities) {
+            if (!lastActivityId || newActivities.length === 0) {
+                if (newActivities.length > 0) {
+                    lastActivityId = newActivities[0].id;
+                }
+                return false;
+            }
+            
+            // Check if the first activity is new
+            const hasNew = newActivities[0].id !== lastActivityId;
+            if (hasNew) {
+                lastActivityId = newActivities[0].id;
+                console.log('🔥 New activity detected!');
+            }
+            
+            return hasNew;
+        }
+
+        function renderActivities(highlightNew = false) {
+            const listEl = document.getElementById('activitiesList');
+            listEl.innerHTML = '';
+            
+            activities.forEach((activity, index) => {
+                const isNew = highlightNew && index === 0;
+                const activityEl = createActivityElement(activity, isNew);
+                listEl.appendChild(activityEl);
+            });
+        }
+
+        function createActivityElement(activity, isNew = false) {
+            const div = document.createElement('div');
+            div.className = `activity-item ${isNew ? 'new' : ''}`;
+            
+            const timeAgo = getTimeAgo(new Date(activity.timestamp));
+            const amount = activity.amount ? `<span class="activity-amount">₦${activity.amount}</span>` : '';
+            
+            div.innerHTML = `
+                <div class="activity-icon" style="background-color: ${activity.color}20; color: ${activity.color}">
+                    ${getIcon(activity.icon)}
+                </div>
+                <div class="activity-content">
+                    <div class="activity-title">${activity.title}</div>
+                    <div class="activity-description">${activity.description} ${amount}</div>
+                    <div class="activity-time">${timeAgo}</div>
+                </div>
+            `;
+            
+            return div;
+        }
+
+        function getIcon(iconName) {
+            const icons = {
+                'shopping-cart': '🛒',
+                'credit-card': '💳',
+                'user-plus': '👤',
+                'store': '🏪'
+            };
+            return icons[iconName] || '📋';
+        }
+
+        function getTimeAgo(date) {
+            const now = new Date();
+            const diff = now - date;
+            const minutes = Math.floor(diff / 60000);
+            
+            if (minutes < 1) return 'Just now';
+            if (minutes < 60) return `${minutes} min${minutes > 1 ? 's' : ''} ago`;
+            
+            const hours = Math.floor(minutes / 60);
+            if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+            
+            const days = Math.floor(hours / 24);
+            return `${days} day${days > 1 ? 's' : ''} ago`;
+        }
+
+        function updateLastUpdateTime() {
+            const now = new Date();
+            const timeString = now.toLocaleTimeString();
+            document.getElementById('lastUpdate').textContent = timeString;
+        }
+
+        function startPolling() {
+            // Initial fetch
+            fetchActivities();
+            
+            // Set up interval
+            setInterval(fetchActivities, REFRESH_INTERVAL);
+            
+            console.log(`🔄 Started polling every ${REFRESH_INTERVAL/1000} seconds`);
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('refreshInterval').textContent = REFRESH_INTERVAL / 1000;
+            startPolling();
+        });
+    </script>
+</body>
+</html>

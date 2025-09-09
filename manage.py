@@ -3,10 +3,13 @@
 import os
 import sys
 
+# Add the project root to the Python path
+project_root = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(project_root)
 
 def main():
     """Run administrative tasks."""
-    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'bestyy.settings')
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'bestyy.bestyy.settings')
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:

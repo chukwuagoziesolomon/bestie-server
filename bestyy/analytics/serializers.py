@@ -1,4 +1,17 @@
 from rest_framework import serializers
+from .models import Activity
+
+
+class ActivitySerializer(serializers.ModelSerializer):
+    timestamp = serializers.DateTimeField(source='created_at', read_only=True)
+
+    class Meta:
+        model = Activity
+        fields = [
+            'id', 'title', 'description', 'icon', 'color', 'amount',
+            'actor', 'target_type', 'target_id', 'metadata', 'timestamp'
+        ]
+        read_only_fields = ['id', 'timestamp']
 
 class TopDishSerializer(serializers.Serializer):
     dish_name = serializers.CharField()

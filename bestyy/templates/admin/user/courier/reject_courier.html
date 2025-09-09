@@ -1,0 +1,83 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls static %}
+
+{% block extrastyle %}
+    {{ block.super }}
+    <link rel="stylesheet" type="text/css" href="{% static 'admin/css/forms.css' %}">
+    <style>
+        .form-row {
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .form-row:last-child {
+            border-bottom: none;
+        }
+        .form-row label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            min-height: 100px;
+        }
+        .submit-row {
+            padding: 12px 0;
+            text-align: right;
+        }
+        .submit-row input[type="submit"] {
+            background: #f44336;
+            color: white;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .submit-row a.button {
+            display: inline-block;
+            background: #79aec8;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 4px;
+            text-decoration: none;
+            margin-right: 10px;
+        }
+        .submit-row a.button:hover {
+            background: #609ab6;
+        }
+    </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
+    &rsaquo; <a href="{% url 'admin:app_list' app_label='user' %}">User</a>
+    &rsaquo; <a href="{% url 'admin:user_courierprofile_changelist' %}">Courier Profiles</a>
+    &rsaquo; Reject Courier Verification
+</div>
+{% endblock %}
+
+{% block content %}
+    <div id="content-main">
+        <div class="module">
+            <h2>Reject Courier: {{ courier.user.get_full_name|default:courier.user.email }}</h2>
+            
+            <form method="post" action="">
+                {% csrf_token %}
+                <div class="form-row">
+                    <label for="id_notes">Reason for Rejection:</label>
+                    <textarea id="id_notes" name="notes" required placeholder="Please provide a reason for rejecting this courier's verification."></textarea>
+                    <p class="help">This note will be visible to the courier and should explain why their verification was rejected.</p>
+                </div>
+                
+                <div class="submit-row">
+                    <a href="{% url 'admin:user_courierprofile_changelist' %}" class="button">Cancel</a>
+                    <input type="submit" value="Reject Courier" class="default">
+                </div>
+            </form>
+        </div>
+    </div>
+{% endblock %}

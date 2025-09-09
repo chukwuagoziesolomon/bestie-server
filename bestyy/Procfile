@@ -1,1 +1,3 @@
-web: gunicorn bestyy.wsgi:application
+web: daphne -b 0.0.0.0 -p $PORT bestyy.asgi:application
+worker: celery -A bestyy worker --loglevel=info
+beat: celery -A bestyy beat --loglevel=info

@@ -3,4 +3,4 @@ from django.apps import AppConfig
 
 class BestyyappConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
-    name = 'bestyyapp'
+    name = 'bestyy.bestyyapp'

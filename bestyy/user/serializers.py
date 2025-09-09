@@ -1,52 +1,37 @@
-from rest_framework import serializers
-from django.contrib.auth.models import User
-from .models import VendorProfile, CourierProfile, UserProfile, MenuItem, Order, Booking, Address, Favorite, Payment, SavedCard, Accommodation
+"""
+Main serializers module. This file re-exports serializers from their respective modules.
+"""
+from .serializers.user_serializers import (
+    UserSerializer,
+    UserProfileSerializer,
+    UserSignupSerializer,
+)
+from .serializers.vendor_serializers import (
+    VendorProfileSerializer,
+    VendorApplicationSerializer,
+    VendorProfileMinimalSerializer,
+)
+from .serializers.courier_serializers import (
+    CourierProfileSerializer,
+    CourierSignupSerializer,
+    CourierApplicationSerializer,
+)
+from .serializers.menu_serializers import MenuItemSerializer
+from .models import Favorite, Payment, SavedCard, Address, Order, Booking, Accommodation
 
-class UserSerializer(serializers.ModelSerializer):
-    first_name = serializers.CharField(
-        required=True,
-        error_messages={'required': 'Please enter your first name.'}
-    )
-    last_name = serializers.CharField(
-        required=True,
-        error_messages={'required': 'Please enter your last name.'}
-    )
-    email = serializers.EmailField(
-        required=True,
-        error_messages={'required': 'Please enter your email address.', 'invalid': 'Enter a valid email address.'}
-    )
-    password = serializers.CharField(
-        write_only=True,
-        required=True,
-        error_messages={'required': 'Please enter your password.'}
-    )
-    confirm_password = serializers.CharField(
-        write_only=True,
-        required=True,
-        error_messages={'required': 'Please confirm your password.'}
-    )
-    class Meta:
-        model = User
-        fields = ['id', 'username', 'first_name', 'last_name', 'email', 'password', 'confirm_password']
-        extra_kwargs = {'password': {'write_only': True}}
-
-    def validate(self, data):
-        # Password match
-        if data['password'] != data['confirm_password']:
-            raise serializers.ValidationError({"password": "Passwords do not match."})
-        # Removed unique email validation to allow multi-role registration
-        return data
-
-    def create(self, validated_data):
-        validated_data.pop('confirm_password')
-        user = User.objects.create_user(
-            username=validated_data.get('username', validated_data['email']),
-            email=validated_data['email'],
-            password=validated_data['password'],
-            first_name=validated_data.get('first_name', ''),
-            last_name=validated_data.get('last_name', ''),
-        )
-        return user
+# Re-export the serializers
+__all__ = [
+    'UserSerializer',
+    'UserProfileSerializer',
+    'UserSignupSerializer',
+    'VendorProfileSerializer',
+    'VendorApplicationSerializer',
+    'VendorProfileMinimalSerializer',
+    'CourierProfileSerializer',
+    'CourierSignupSerializer',
+    'CourierApplicationSerializer',
+    'MenuItemSerializer',
+]
 
 class MenuItemSerializer(serializers.ModelSerializer):
     image = serializers.ImageField(
@@ -123,6 +108,88 @@ class VendorProfileSerializer(serializers.ModelSerializer):
         vendor_profile = VendorProfile.objects.create(user=user, **validated_data)
         return vendor_profile
 
+class CourierSignupSerializer(serializers.ModelSerializer):
+    first_name = serializers.CharField(required=True, write_only=True)
+    last_name = serializers.CharField(required=True, write_only=True)
+    email = serializers.EmailField(required=True, write_only=True)
+    password = serializers.CharField(write_only=True, required=True, style={'input_type': 'password'})
+    confirm_password = serializers.CharField(write_only=True, required=True, style={'input_type': 'password'})
+    phone = serializers.CharField(required=True)
+    address = serializers.CharField(required=True)
+    service_areas = serializers.CharField(required=True)
+    delivery_radius = serializers.CharField(required=True)
+    opening_hours = serializers.TimeField(required=True)
+    closing_hours = serializers.TimeField(required=True)
+    has_bike = serializers.BooleanField(required=True)
+    verification_preference = serializers.ChoiceField(
+        choices=[('NIN', 'NIN'), ('DL', "Driver's License"), ('VC', "Voter's Card")],
+        required=True
+    )
+    id_upload = serializers.ImageField(required=True)
+    profile_photo = serializers.ImageField(required=True)
+    agreed_to_terms = serializers.BooleanField(required=True)
+    
+    class Meta:
+        model = CourierProfile
+        fields = [
+            'first_name', 'last_name', 'email', 'password', 'confirm_password',
+            'phone', 'address', 'service_areas', 'delivery_radius',
+            'opening_hours', 'closing_hours', 'has_bike', 'verification_preference',
+            'id_upload', 'profile_photo', 'agreed_to_terms'
+        ]
+        extra_kwargs = {
+            'password': {'write_only': True},
+            'confirm_password': {'write_only': True},
+        }
+    
+    def validate(self, data):
+        # Check if passwords match
+        if data['password'] != data['confirm_password']:
+            raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
+        
+        # Check if email is already in use
+        if User.objects.filter(email=data['email']).exists():
+            raise serializers.ValidationError({"email": "A user with this email already exists."})
+        
+        # Check if phone is already in use
+        if CourierProfile.objects.filter(phone=data['phone']).exists():
+            raise serializers.ValidationError({"phone": "A courier with this phone number already exists."})
+        
+        # Check if terms are agreed to
+        if not data.get('agreed_to_terms'):
+            raise serializers.ValidationError({"agreed_to_terms": "You must agree to the terms and conditions."})
+        
+        return data
+    
+    def create(self, validated_data):
+        # Remove confirm_password as it's not needed for user creation
+        validated_data.pop('confirm_password', None)
+        
+        # Create user
+        user = User.objects.create_user(
+            username=validated_data['email'],
+            email=validated_data['email'],
+            password=validated_data['password'],
+            first_name=validated_data['first_name'],
+            last_name=validated_data['last_name']
+        )
+        
+        # Create courier profile
+        courier_profile = CourierProfile.objects.create(
+            user=user,
+            phone=validated_data['phone'],
+            service_areas=validated_data['service_areas'],
+            delivery_radius=validated_data['delivery_radius'],
+            opening_hours=validated_data['opening_hours'],
+            closing_hours=validated_data['closing_hours'],
+            has_bike=validated_data['has_bike'],
+            verification_preference=validated_data['verification_preference'],
+            id_upload=validated_data['id_upload'],
+            profile_photo=validated_data['profile_photo'],
+            agreed_to_terms=validated_data['agreed_to_terms']
+        )
+        return courier_profile
+
 class CourierProfileSerializer(serializers.ModelSerializer):
     user = UserSerializer(required=True)
     phone = serializers.CharField(
@@ -137,43 +204,106 @@ class CourierProfileSerializer(serializers.ModelSerializer):
         required=True,
         error_messages={'required': 'Please enter your delivery radius.'}
     )
-    opening_hours = serializers.CharField(
+    opening_hours = serializers.TimeField(
         required=True,
-        error_messages={'required': 'Please enter your opening hours.'}
+        error_messages={'required': 'Please enter your opening hours.'},
+        format='%I:%M %p'
     )
-    closing_hours = serializers.CharField(
+    closing_hours = serializers.TimeField(
         required=True,
-        error_messages={'required': 'Please enter your closing hours.'}
+        error_messages={'required': 'Please enter your closing hours.'},
+        format='%I:%M %p'
     )
+    id_upload = serializers.ImageField(read_only=True)
+    profile_photo = serializers.ImageField(read_only=True)
+    nin_number = serializers.CharField(read_only=True)
+    verification_preference = serializers.CharField(read_only=True)
+    has_bike = serializers.BooleanField(read_only=True)
+    vehicle_type = serializers.CharField(read_only=True)
+    verification_status = serializers.CharField(read_only=True)
+    created_at = serializers.DateTimeField(read_only=True, format='%Y-%m-%d %I:%M %p')
+    
     class Meta:
         model = CourierProfile
-        fields = '__all__'
-        read_only_fields = ['user']
+        fields = [
+            'id', 'user', 'phone', 'service_areas', 'delivery_radius',
+            'opening_hours', 'closing_hours', 'has_bike', 'verification_preference',
+            'nin_number', 'id_upload', 'profile_photo', 'vehicle_type',
+            'verification_status', 'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']
 
     def validate(self, data):
+        # Handle user data if present in the request
+        user_data = data.pop('user', None)
+        if user_data and isinstance(user_data, dict):
+            # If user data is provided, validate it
+            user_serializer = UserSerializer(data=user_data)
+            if not user_serializer.is_valid():
+                raise serializers.ValidationError({"user": user_serializer.errors})
+            data['user'] = user_serializer.validated_data
+        
+        # Phone number validation
         phone = data.get('phone')
-        if phone and CourierProfile.objects.filter(phone=phone).exists():
-            raise serializers.ValidationError({"phone": "A courier with this phone number already exists."})
+        if phone and (not phone.isdigit() or len(phone) < 10):
+            raise serializers.ValidationError({"phone": "Please enter a valid phone number with at least 10 digits."})
+        
+        # Ensure opening hours are before closing hours if both are provided
+        opening_hours = data.get('opening_hours')
+        closing_hours = data.get('closing_hours')
+        
+        if opening_hours and closing_hours:
+            if opening_hours >= closing_hours:
+                raise serializers.ValidationError({
+                    "opening_hours": "Opening hours must be before closing hours."
+                })
+        
         return data
 
     def create(self, validated_data):
         user_data = validated_data.pop('user')
         email = user_data.get('email')
-        user, created = User.objects.get_or_create(
-            email=email,
-            defaults={
-                'username': user_data.get('username', email),
-                'first_name': user_data.get('first_name', ''),
-                'last_name': user_data.get('last_name', '')
-            }
+        
+        # Check if user with this email already exists
+        if User.objects.filter(email=email).exists():
+            raise serializers.ValidationError({"email": "A user with this email already exists."})
+        
+        # Create user
+        user_serializer = UserSerializer(data=user_data)
+        if not user_serializer.is_valid():
+            raise serializers.ValidationError({"user": user_serializer.errors})
+            
+        user = user_serializer.save()
+        
+        # Create courier profile with verification_status defaulting to 'pending'
+        courier_profile = CourierProfile.objects.create(
+            user=user,
+            verification_status='pending',
+            **validated_data
         )
-        if created:
-            user.set_password(user_data.get('password'))
-            user.save()
-        if CourierProfile.objects.filter(user=user).exists():
-            raise serializers.ValidationError({'user': 'A courier profile with this email already exists.'})
-        courier_profile = CourierProfile.objects.create(user=user, **validated_data)
         return courier_profile
+        
+    def update(self, instance, validated_data):
+        # Update user data if provided
+        user_data = validated_data.pop('user', None)
+        if user_data:
+            user_serializer = UserSerializer(
+                instance.user, 
+                data=user_data, 
+                partial=True
+            )
+            if not user_serializer.is_valid():
+                raise serializers.ValidationError({"user": user_serializer.errors})
+            user_serializer.save()
+        
+        # Update courier profile
+        for attr, value in validated_data.items():
+            # Don't allow updating verification_status through this endpoint
+            if attr != 'verification_status':
+                setattr(instance, attr, value)
+                
+        instance.save()
+        return instance
 
 class UserProfileSerializer(serializers.ModelSerializer):
     user = UserSerializer(required=True)
@@ -230,40 +360,9 @@ class UserSignupSerializer(serializers.ModelSerializer):
         user_profile = UserProfile.objects.create(user=user, phone=phone_number, **validated_data)
         return user_profile 
 
-class OrderSerializer(serializers.ModelSerializer):
-    user = UserSerializer(read_only=True)
-    vendor = VendorProfileSerializer(read_only=True)
-    items = MenuItemSerializer(many=True, read_only=True)
+# Order serializers moved to user/serializers/order_serializers.py 
 
-    class Meta:
-        model = Order
-        fields = ['id', 'user', 'vendor', 'items', 'total_price', 'order_name', 'delivery_address', 'delivery_date', 'status', 'created_at'] 
-
-class VendorOrderTrackingSerializer(serializers.ModelSerializer):
-    dish_name = serializers.SerializerMethodField()
-    address = serializers.SerializerMethodField()
-    item = serializers.SerializerMethodField()
-    total = serializers.DecimalField(source='total_price', max_digits=10, decimal_places=2)
-    status = serializers.CharField()
-    username = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Order
-        fields = ['id', 'username', 'dish_name', 'address', 'item', 'total', 'status']
-
-    def get_dish_name(self, obj):
-        # Assuming one item per order for simplicity
-        return obj.items.first().dish_name if obj.items.exists() else None
-
-    def get_address(self, obj):
-        return obj.delivery_address
-
-    def get_item(self, obj):
-        # List all dish names in the order
-        return [item.dish_name for item in obj.items.all()]
-
-    def get_username(self, obj):
-        return obj.user.get_full_name() or obj.user.username
+# VendorOrderTrackingSerializer moved to user/serializers/order_serializers.py
 
 class AccommodationSerializer(serializers.ModelSerializer):
     class Meta:
@@ -339,17 +438,10 @@ class AddressSerializer(serializers.ModelSerializer):
         choices=Address.ADDRESS_TYPES,
         error_messages={'required': 'Please select an address type.'}
     )
-    full_name = serializers.CharField(
+    address = serializers.CharField(
+        source='street_address',
         required=True,
-        error_messages={'required': 'Please enter the full name.'}
-    )
-    phone_number = serializers.CharField(
-        required=True,
-        error_messages={'required': 'Please enter the phone number.'}
-    )
-    street_address = serializers.CharField(
-        required=True,
-        error_messages={'required': 'Please enter the street address.'}
+        error_messages={'required': 'Please enter the address.'}
     )
     city = serializers.CharField(
         required=True,
@@ -359,18 +451,26 @@ class AddressSerializer(serializers.ModelSerializer):
         required=True,
         error_messages={'required': 'Please enter the state.'}
     )
-    postal_code = serializers.CharField(
+    zip_code = serializers.CharField(
+        source='postal_code',
         required=True,
-        error_messages={'required': 'Please enter the postal code.'}
+        error_messages={'required': 'Please enter the zip code.'}
+    )
+    is_default = serializers.BooleanField(
+        default=False,
+        required=False
     )
 
     class Meta:
         model = Address
-        fields = ['id', 'address_type', 'full_name', 'phone_number', 'street_address', 'city', 'state', 'postal_code', 'is_default', 'created_at', 'updated_at']
+        fields = ['id', 'address_type', 'address', 'city', 'state', 'zip_code', 'is_default', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at']
 
     def create(self, validated_data):
         validated_data['user'] = self.context['request'].user
+        # Set default values for required fields that are not in the simplified payload
+        validated_data['full_name'] = self.context['request'].user.get_full_name() or self.context['request'].user.username
+        validated_data['phone_number'] = getattr(self.context['request'].user.profile, 'phone', '')
         return super().create(validated_data) 
 
 class FavoriteSerializer(serializers.ModelSerializer):

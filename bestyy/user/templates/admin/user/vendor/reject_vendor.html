@@ -1,0 +1,72 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls static admin_modify %}
+
+{% block extrahead %}
+{{ block.super }}
+<style>
+    .reject-form {
+        max-width: 600px;
+        margin: 20px auto;
+        padding: 20px;
+        background: #fff;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+    }
+    .form-row {
+        margin-bottom: 15px;
+    }
+    .form-row label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+    }
+    .form-row textarea {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        min-height: 100px;
+    }
+    .submit-row {
+        text-align: right;
+        margin-top: 20px;
+    }
+    .button {
+        padding: 8px 15px;
+        background: #417690;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        text-decoration: none;
+        display: inline-block;
+    }
+    .button.default {
+        background: #79aec8;
+        margin-right: 10px;
+    }
+    .button.danger {
+        background: #ba2121;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="reject-form">
+    <h1>Reject Vendor Application</h1>
+    <p>Please provide a reason for rejecting this vendor's application. The vendor will receive this feedback.</p>
+    
+    <form method="post" id="reject_vendor_form">
+        {% csrf_token %}
+        <div class="form-row">
+            <label for="verification_notes">Reason for Rejection:</label>
+            <textarea name="verification_notes" id="verification_notes" required></textarea>
+        </div>
+        
+        <div class="submit-row">
+            <a href="{% url 'admin:user_vendorprofile_changelist' %}" class="button default">Cancel</a>
+            <button type="submit" class="button danger">Reject Vendor</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

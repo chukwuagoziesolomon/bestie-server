@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Social Login Test</title>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .login-container {
+            text-align: center;
+            margin-top: 50px;
+        }
+        .google-btn {
+            background-color: #4285F4;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            margin: 20px auto;
+        }
+        .google-btn:hover {
+            background-color: #357ae8;
+        }
+        .google-icon {
+            width: 20px;
+            height: 20px;
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <h1>Welcome to Bestyy</h1>
+        <p>Sign in with your Google account</p>
+        
+        <!-- Google Sign-In Button -->
+        <div id="g_id_onload"
+             data-client_id="YOUR_GOOGLE_CLIENT_ID"
+             data-login_uri="http://localhost:8000/auth/google/callback"
+             data-auto_prompt="false">
+        </div>
+        <div class="g_id_signin"
+             data-type="standard"
+             data-size="large"
+             data-theme="outline"
+             data-text="sign_in_with"
+             data-shape="rectangular"
+             data-logo_alignment="left">
+        </div>
+        
+        <!-- Or use a custom button -->
+        <button class="google-btn" onclick="initiateGoogleLogin()">
+            <img src="https://www.google.com/favicon.ico" alt="Google" class="google-icon">
+            Sign in with Google
+        </button>
+    </div>
+
+    <!-- Include the Google OAuth script -->
+    <script src="/static/js/google-oauth.js"></script>
+    <script>
+        // Function to handle the Google Sign-In response
+        function handleCredentialResponse(response) {
+            const data = {
+                provider: 'google',
+                code: response.credential,
+                redirect_uri: 'http://localhost:8000/auth/google/callback'
+            };
+            
+            // Send the token to your backend
+            fetch('http://localhost:8000/api/auth/social/google/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Success:', data);
+                // Store the tokens
+                if (data.access && data.refresh) {
+                    localStorage.setItem('access_token', data.access);
+                    localStorage.setItem('refresh_token', data.refresh);
+                    // Redirect to dashboard or home
+                    window.location.href = '/dashboard/';
+                }
+            })
+            .catch((error) => {
+                console.error('Error:', error);
+            });
+        }
+        
+        // Expose the function to the window object
+        window.initiateGoogleLogin = function() {
+            // This would be called by the custom button
+            window.location.href = 'http://localhost:8000/auth/google/login/';
+        };
+    </script>
+</body>
+</html>
