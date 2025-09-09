@@ -17,7 +17,8 @@ from urllib.parse import urlparse, parse_qs, urlencode
 
 # Import the view for social login test
 from user.views import social_login_test
-from user.api.social_views import GoogleLogin, GoogleSignup, GoogleConnect, CompleteProfile
+# Temporarily disabled allauth imports
+# from user.api.social_views import GoogleLogin, GoogleSignup, GoogleConnect, CompleteProfile
 from django.views.generic import RedirectView
 
 # Import the admin site from user app if it exists
@@ -26,21 +27,22 @@ try:
 except ImportError:
     admin_site = admin.site
 
-# Import allauth views after admin site is defined
-from allauth.socialaccount.providers.oauth2.views import OAuth2LoginView, OAuth2CallbackView
-from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
+# Import allauth views after admin site is defined (temporarily disabled)
+# from allauth.socialaccount.providers.oauth2.views import OAuth2LoginView, OAuth2CallbackView
+# from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
 
-class GoogleOAuth2LoginView(OAuth2LoginView):
-    """Custom OAuth2 login view for Google"""
-    adapter_class = GoogleOAuth2Adapter
+# Temporarily disabled allauth OAuth classes
+# class GoogleOAuth2LoginView(OAuth2LoginView):
+#     """Custom OAuth2 login view for Google"""
+#     adapter_class = GoogleOAuth2Adapter
 
-class GoogleOAuth2CallbackView(OAuth2CallbackView, View):
-    """Custom OAuth2 callback view for Google"""
-    adapter_class = GoogleOAuth2Adapter
+# class GoogleOAuth2CallbackView(OAuth2CallbackView, View):
+#     """Custom OAuth2 callback view for Google"""
+#     adapter_class = GoogleOAuth2Adapter
     
-    def get(self, request, *args, **kwargs):
-        # Delegate to the parent class's dispatch method
-        return super().get(request, *args, **kwargs)
+#     def get(self, request, *args, **kwargs):
+#         # Delegate to the parent class's dispatch method
+#         return super().get(request, *args, **kwargs)
 
 # WebSocket URL patterns are imported in asgi.py
 
@@ -48,21 +50,21 @@ urlpatterns = [
     # Custom admin site (Django admin)
     path('django-admin/', admin_site.urls),  # Changed from /admin/ to /django-admin/
     
-    # Authentication endpoints
+    # Authentication endpoints (temporarily disabled allauth)
     # path('api/auth/', include('dj_rest_auth.urls')),  # Removed email/password login endpoints
-    path('api/auth/registration/', include('dj_rest_auth.registration.urls')),
+    # path('api/auth/registration/', include('dj_rest_auth.registration.urls')),
     
-    # Google OAuth URLs
-    path('api/auth/social/google/', GoogleLogin.as_view(), name='google-login'),  # Handle both GET and POST
-    path('api/auth/social/google/callback/', GoogleLogin.as_view(http_method_names=['post']), name='google-callback'),
-    path('api/auth/social/google/signup/', GoogleSignup.as_view(), name='google-signup'),
-    path('api/auth/social/google/connect/', GoogleConnect.as_view(), name='google-connect'),
-    path('api/auth/social/complete-profile/', CompleteProfile.as_view(), name='complete-profile'),
+    # Google OAuth URLs (temporarily disabled)
+    # path('api/auth/social/google/', GoogleLogin.as_view(), name='google-login'),  # Handle both GET and POST
+    # path('api/auth/social/google/callback/', GoogleLogin.as_view(http_method_names=['post']), name='google-callback'),
+    # path('api/auth/social/google/signup/', GoogleSignup.as_view(), name='google-signup'),
+    # path('api/auth/social/google/connect/', GoogleConnect.as_view(), name='google-connect'),
+    # path('api/auth/social/complete-profile/', CompleteProfile.as_view(), name='complete-profile'),
     
-    # Django Allauth URLs (kept for admin if needed)
-    path('auth/google/login/', GoogleOAuth2LoginView.as_view(), name='google_login'),
-    path('auth/google/callback/', GoogleOAuth2CallbackView.as_view(), name='google_callback'),
-    path('api/auth/social/', include('allauth.socialaccount.urls')),
+    # Django Allauth URLs (temporarily disabled)
+    # path('auth/google/login/', GoogleOAuth2LoginView.as_view(), name='google_login'),
+    # path('auth/google/callback/', GoogleOAuth2CallbackView.as_view(), name='google_callback'),
+    # path('api/auth/social/', include('allauth.socialaccount.urls')),
     path('api/token/', obtain_auth_token, name='api_token_auth'),
     
     # API endpoints

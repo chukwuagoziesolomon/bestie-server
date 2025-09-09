@@ -10,7 +10,8 @@ from .api.courier_views import (
     CourierRegistrationView,
 )
 from .admin_dashboard_views import AdminDashboardMetricsView
-from .api.social_views import GoogleLogin, GoogleConnect, GoogleSignup, CompleteProfile
+# Temporarily disabled allauth social views
+# from .api.social_views import GoogleLogin, GoogleConnect, GoogleSignup, CompleteProfile
 from .api.courier_views import CourierListView, CourierDetailView, CourierVerificationView, CourierRegistrationView
 from .api.vendor_views import VendorRegistrationView, VendorProfileView, VendorVerificationStatusView
 from .api.admin_views import AdminDashboardMetricsView, PendingVendorsList, VendorVerificationView, VendorStatsView, PendingCouriersList
@@ -131,21 +132,22 @@ auth_urls = [
     path('me/', CurrentUserView.as_view(), name='current-user'),
     
     # OAuth2 Endpoints
-    path('oauth/', include([
-        # Google OAuth
-        path('google/', include([
-            # Initiate OAuth flow (returns auth URL)
-            path('', GoogleLogin.as_view(), name='google-initiate'),
-            # OAuth callback (handled by GoogleLogin view with code parameter)
-            path('callback/', GoogleLogin.as_view(), name='google-callback'),
-            # Connect existing account with Google
-            path('connect/', GoogleConnect.as_view(), name='google-connect'),
-            # Sign up with Google
-            path('signup/', GoogleSignup.as_view(), name='google-signup'),
-        ])),
-        # Complete profile after social signup
-        path('complete-profile/', CompleteProfile.as_view(), name='complete-profile'),
-    ])),
+    # Temporarily disabled allauth OAuth URLs
+    # path('oauth/', include([
+    #     # Google OAuth
+    #     path('google/', include([
+    #         # Initiate OAuth flow (returns auth URL)
+    #         path('', GoogleLogin.as_view(), name='google-initiate'),
+    #         # OAuth callback (handled by GoogleLogin view with code parameter)
+    #         path('callback/', GoogleLogin.as_view(), name='google-callback'),
+    #         # Connect existing account with Google
+    #         path('connect/', GoogleConnect.as_view(), name='google-connect'),
+    #         # Sign up with Google
+    #         path('signup/', GoogleSignup.as_view(), name='google-signup'),
+    #     ])),
+    #     # Complete profile after social signup
+    #     path('complete-profile/', CompleteProfile.as_view(), name='complete-profile'),
+    # ])),
 ]
 
 admin_api_urls = [
