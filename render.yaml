@@ -10,6 +10,8 @@ services:
       pip install setuptools==68.2.2 wheel==0.41.2
       pip install -r requirements.txt --no-cache-dir
       cd bestyy && python manage.py collectstatic --noinput
+      cd bestyy && python manage.py migrate sites
+      cd bestyy && python manage.py migrate product
       cd bestyy && python manage.py migrate
     startCommand: cd bestyy && daphne -b 0.0.0.0 -p $PORT bestyy.asgi:application
     envVars:
