@@ -7,6 +7,14 @@ set -o pipefail
 
 echo "Starting build process..."
 
+# Upgrade pip first
+echo "Upgrading pip..."
+pip install --upgrade pip
+
+# Install build dependencies first
+echo "Installing build dependencies..."
+pip install setuptools>=65.0.0 wheel>=0.40.0
+
 # Install dependencies
 echo "Installing Python dependencies..."
 pip install -r requirements.txt

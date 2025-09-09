@@ -33,8 +33,8 @@ This guide will help you deploy the Bestyy backend to Render with Supabase as th
 2. Connect your GitHub repository
 3. Configure the service:
    - **Name**: `bestyy-backend`
-   - **Environment**: `Python 3`
-   - **Build Command**: `pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate`
+   - **Environment**: `Python 3.11` (specify version to avoid Python 3.13 compatibility issues)
+   - **Build Command**: `pip install --upgrade pip && pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate`
    - **Start Command**: `daphne -b 0.0.0.0 -p $PORT bestyy.asgi:application`
    - **Plan**: Free (or paid for production)
 
@@ -128,19 +128,24 @@ REACT_APP_BASE_URL=https://your-render-app.onrender.com
 
 ### Common Issues
 
-1. **Database Connection Error**
+1. **Build Error: "Getting requirements to build wheel did not run successfully"**
+   - This is usually caused by Python 3.13 compatibility issues
+   - **Solution**: Use Python 3.11 instead (specified in `runtime.txt` and `render.yaml`)
+   - Make sure to set the Python version in Render dashboard to 3.11
+
+2. **Database Connection Error**
    - Check if `DATABASE_URL` is correctly set
    - Verify Supabase database is accessible
 
-2. **Static Files Not Loading**
+3. **Static Files Not Loading**
    - Ensure `STATIC_ROOT` is set correctly
    - Check if `collectstatic` ran during build
 
-3. **WebSocket Connection Failed**
+4. **WebSocket Connection Failed**
    - Verify `WEBSOCKET_BASE_URL` is set correctly
    - Check if Redis is configured (if using Redis)
 
-4. **CORS Errors**
+5. **CORS Errors**
    - Update `CORS_ALLOWED_ORIGINS` with your frontend domain
    - Ensure `CORS_ALLOW_CREDENTIALS` is set to `True`
 
