@@ -14,7 +14,7 @@ services:
     startCommand: cd bestyy && daphne -b 0.0.0.0 -p $PORT bestyy.asgi:application
     envVars:
       - key: DJANGO_SETTINGS_MODULE
-        value: bestyy.settings.production
+        value: bestyy.settings
       - key: SECRET_KEY
         generateValue: true
       - key: DEBUG
