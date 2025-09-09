@@ -111,6 +111,23 @@ DATABASES = {
     )
 }
 
+# Temporary fallback to SQLite if PostgreSQL connection fails
+if not DEBUG and 'postgresql' in config('DATABASE_URL', default=''):
+    try:
+        # Test the connection
+        import psycopg2
+        conn = psycopg2.connect(config('DATABASE_URL'))
+        conn.close()
+    except Exception as e:
+        print(f"PostgreSQL connection failed: {e}")
+        print("Falling back to SQLite for deployment")
+        DATABASES = {
+            'default': {
+                'ENGINE': 'django.db.backends.sqlite3',
+                'NAME': BASE_DIR / 'db.sqlite3',
+            }
+        }
+
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
     {
