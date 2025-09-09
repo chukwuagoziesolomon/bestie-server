@@ -1,17 +1,41 @@
 services:
   - type: web
-    name: bestie-server
+    name: bestyy-backend
     env: python
-    buildCommand: pip install -r bestyy/requirements.txt
-    startCommand: cd bestyy && python manage.py runserver 0.0.0.0:$PORT
+    plan: free
+    runtime: python-3.11.9
+    buildCommand: |
+      python --version
+      pip install --upgrade pip
+      pip install setuptools==68.2.2 wheel==0.41.2
+      pip install -r bestyy/requirements.txt --no-cache-dir
+      cd bestyy && python manage.py collectstatic --noinput
+      cd bestyy && python manage.py migrate
+    startCommand: cd bestyy && daphne -b 0.0.0.0 -p $PORT bestyy.asgi:application
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.12.0
-      - key: WEB_CONCURRENCY
-        value: 4
-      - key: PORT
-        value: 8000
       - key: DJANGO_SETTINGS_MODULE
-        value: bestyy.settings
-      - key: PYTHONPATH
-        value: .
+        value: bestyy.settings.production
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: False
+      - key: ALLOWED_HOSTS
+        value: bestyy-backend.onrender.com
+      - key: DATABASE_URL
+        fromDatabase:
+          name: bestyy-db
+          property: connectionString
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://your-frontend-domain.com,https://your-admin-domain.com
+
+databases:
+  - name: bestyy-db
+    plan: free
+    databaseName: bestyy
+    user: bestyy_user
