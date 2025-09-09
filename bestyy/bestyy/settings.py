@@ -14,13 +14,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-th5kfgtyu#mxlxtezbd)v9asvrrcc2n791313@ox4$d09mrsfm')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config('DEBUG', default='True').lower() in ('true', '1', 'yes', 'on')
+DEBUG_STR = config('DEBUG', default='True').lower()
+DEBUG = DEBUG_STR in ('true', '1', 'yes', 'on')
 
 # Temporary debugging for deployment
 print(f"=== DEPLOYMENT DEBUG ===")
 print(f"DEBUG setting: {DEBUG}")
 print(f"DEBUG env var: {config('DEBUG', default='True')}")
-print(f"Current ALLOWED_HOSTS: {ALLOWED_HOSTS}")
+print(f"DEBUG_STR: {DEBUG_STR}")
 print(f"========================")
 
 # Base URL for the application
