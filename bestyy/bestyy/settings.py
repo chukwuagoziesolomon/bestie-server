@@ -284,6 +284,9 @@ if not DEBUG:
         }
     }
     
+    # Update ALLOWED_HOSTS for production
+    ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='*.onrender.com').split(',')
+    
     # Update CORS origins for production
     CORS_ALLOWED_ORIGINS = config('CORS_ALLOWED_ORIGINS', default='').split(',')
     
