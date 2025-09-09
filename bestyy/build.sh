@@ -11,13 +11,14 @@ echo "Starting build process..."
 echo "Python version:"
 python --version
 
-# Upgrade pip first
-echo "Upgrading pip..."
+# Upgrade pip and install build tools
+echo "Upgrading pip and installing build tools..."
 pip install --upgrade pip
+pip install setuptools==68.2.2 wheel==0.41.2
 
-# Install dependencies from working environment
+# Install dependencies with no cache to avoid issues
 echo "Installing Python dependencies..."
-pip install -r requirements.txt
+pip install -r requirements.txt --no-cache-dir
 
 # Collect static files
 echo "Collecting static files..."

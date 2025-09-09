@@ -7,7 +7,8 @@ services:
     buildCommand: |
       python --version
       pip install --upgrade pip
-      pip install -r requirements.txt
+      pip install setuptools==68.2.2 wheel==0.41.2
+      pip install -r requirements.txt --no-cache-dir
       python manage.py collectstatic --noinput
       python manage.py migrate
     startCommand: daphne -b 0.0.0.0 -p $PORT bestyy.asgi:application

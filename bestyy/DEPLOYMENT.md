@@ -38,6 +38,18 @@ This guide will help you deploy the Bestyy backend to Render with Supabase as th
    - **Start Command**: `daphne -b 0.0.0.0 -p $PORT bestyy.asgi:application`
    - **Plan**: Free (or paid for production)
 
+### Option C: Docker Deployment (Recommended for Python version issues)
+
+1. In Render dashboard, click "New +" > "Web Service"
+2. Connect your GitHub repository
+3. Configure the service:
+   - **Name**: `bestyy-backend`
+   - **Environment**: `Docker`
+   - **Dockerfile Path**: `bestyy/Dockerfile`
+   - **Plan**: Free (or paid for production)
+
+This approach gives you complete control over the Python version and environment.
+
 ## Step 3: Environment Variables
 
 Set these environment variables in Render:
@@ -132,6 +144,7 @@ REACT_APP_BASE_URL=https://your-render-app.onrender.com
    - This is usually caused by Python 3.13 compatibility issues
    - **Solution**: Use Python 3.11 instead (specified in `runtime.txt` and `render.yaml`)
    - Make sure to set the Python version in Render dashboard to 3.11
+   - **Alternative**: Use Docker deployment (see Dockerfile) for more control over Python version
 
 2. **Database Connection Error**
    - Check if `DATABASE_URL` is correctly set
