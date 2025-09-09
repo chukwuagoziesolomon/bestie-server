@@ -17,7 +17,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-COPY bestyy/requirements.txt /app/
+COPY requirements.txt /app/
 RUN pip install --upgrade pip
 RUN pip install setuptools==68.2.2 wheel==0.41.2
 RUN pip install -r requirements.txt
