@@ -14,7 +14,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-th5kfgtyu#mxlxtezbd)v9asvrrcc2n791313@ox4$d09mrsfm')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config('DEBUG', default=True, cast=bool)
+DEBUG = config('DEBUG', default='True').lower() in ('true', '1', 'yes', 'on')
 
 # Base URL for the application
 BASE_URL = config('BASE_URL', default='http://127.0.0.1:8000')
@@ -284,8 +284,13 @@ if not DEBUG:
         }
     }
     
-    # Update ALLOWED_HOSTS for production
-    ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='*.onrender.com').split(',')
+    # Update ALLOWED_HOSTS for production - hardcode Render domains
+    ALLOWED_HOSTS = [
+        'bestie-server.onrender.com',
+        '*.onrender.com',
+        'localhost',
+        '127.0.0.1'
+    ]
     
     # Update CORS origins for production
     CORS_ALLOWED_ORIGINS = config('CORS_ALLOWED_ORIGINS', default='').split(',')
