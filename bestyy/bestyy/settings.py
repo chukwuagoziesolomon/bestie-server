@@ -41,6 +41,7 @@ THIRD_PARTY_APPS = [
     'corsheaders',
     'channels',
     'cloudinary',
+    'django_filters',
     'django.contrib.sites',
     # Temporarily disabled allauth for deployment
     # 'allauth',
