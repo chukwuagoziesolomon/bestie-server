@@ -288,4 +288,4 @@ if not DEBUG:
     CORS_ALLOWED_ORIGINS = config('CORS_ALLOWED_ORIGINS', default='').split(',')
     
     # Update WebSocket URL for production
-    WEBSOCKET_BASE_URL = config('WEBSOCKET_BASE_URL', default='wss://bestyy-backend.onrender.com')
+    WEBSOCKET_BASE_URL = config('WEBSOCKET_BASE_URL', default='wss://bestie-server.onrender.com')
