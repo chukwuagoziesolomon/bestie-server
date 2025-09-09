@@ -16,6 +16,13 @@ SECRET_KEY = config('SECRET_KEY', default='django-insecure-th5kfgtyu#mxlxtezbd)v
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default='True').lower() in ('true', '1', 'yes', 'on')
 
+# Temporary debugging for deployment
+print(f"=== DEPLOYMENT DEBUG ===")
+print(f"DEBUG setting: {DEBUG}")
+print(f"DEBUG env var: {config('DEBUG', default='True')}")
+print(f"Current ALLOWED_HOSTS: {ALLOWED_HOSTS}")
+print(f"========================")
+
 # Base URL for the application
 BASE_URL = config('BASE_URL', default='http://127.0.0.1:8000')
 
@@ -291,6 +298,10 @@ if not DEBUG:
         'localhost',
         '127.0.0.1'
     ]
+    
+    print(f"=== PRODUCTION MODE ACTIVATED ===")
+    print(f"Production ALLOWED_HOSTS: {ALLOWED_HOSTS}")
+    print(f"=================================")
     
     # Update CORS origins for production
     CORS_ALLOWED_ORIGINS = config('CORS_ALLOWED_ORIGINS', default='').split(',')

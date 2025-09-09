@@ -13,7 +13,13 @@ services:
       cd bestyy && python manage.py migrate sites
       cd bestyy && python manage.py migrate product
       cd bestyy && python manage.py migrate
-    startCommand: cd bestyy && daphne -b 0.0.0.0 -p $PORT bestyy.asgi:application
+    startCommand: |
+      echo "Starting with daphne..."
+      cd bestyy
+      echo "Current directory: $(pwd)"
+      echo "DJANGO_SETTINGS_MODULE: $DJANGO_SETTINGS_MODULE"
+      echo "DEBUG: $DEBUG"
+      daphne -b 0.0.0.0 -p $PORT bestyy.asgi:application
     envVars:
       - key: DJANGO_SETTINGS_MODULE
         value: bestyy.settings
