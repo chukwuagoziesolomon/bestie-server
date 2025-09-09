@@ -17,11 +17,17 @@ SECRET_KEY = config('SECRET_KEY', default='django-insecure-th5kfgtyu#mxlxtezbd)v
 DEBUG_STR = config('DEBUG', default='True').lower()
 DEBUG = DEBUG_STR in ('true', '1', 'yes', 'on')
 
+# Force production mode if we're on Render
+if 'RENDER' in os.environ or 'onrender.com' in config('BASE_URL', default=''):
+    DEBUG = False
+    print("=== FORCED PRODUCTION MODE (Render detected) ===")
+
 # Temporary debugging for deployment
 print(f"=== DEPLOYMENT DEBUG ===")
 print(f"DEBUG setting: {DEBUG}")
 print(f"DEBUG env var: {config('DEBUG', default='True')}")
 print(f"DEBUG_STR: {DEBUG_STR}")
+print(f"RENDER env: {'RENDER' in os.environ}")
 print(f"========================")
 
 # Base URL for the application
@@ -30,7 +36,8 @@ BASE_URL = config('BASE_URL', default='http://127.0.0.1:8000')
 # Google OAuth settings
 GOOGLE_OAUTH_REDIRECT_URI = f"{BASE_URL}/auth/google/callback/"
 
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1').split(',')
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='bestie-server.onrender.com,localhost,127.0.0.1,*.onrender.com').split(',')
+print(f"ALLOWED_HOSTS set to: {ALLOWED_HOSTS}")
 
 # Application definition
 DJANGO_APPS = [
@@ -292,16 +299,7 @@ if not DEBUG:
         }
     }
     
-    # Update ALLOWED_HOSTS for production - hardcode Render domains
-    ALLOWED_HOSTS = [
-        'bestie-server.onrender.com',
-        '*.onrender.com',
-        'localhost',
-        '127.0.0.1'
-    ]
-    
     print(f"=== PRODUCTION MODE ACTIVATED ===")
-    print(f"Production ALLOWED_HOSTS: {ALLOWED_HOSTS}")
     print(f"=================================")
     
     # Update CORS origins for production
