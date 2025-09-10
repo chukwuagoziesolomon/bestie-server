@@ -18,6 +18,7 @@ from user.api.admin_views import (
 from user.api.user_views import UserDetailView
 from analytics.views import RecentActivityView
 from user.api.admin_order_views import AdminOrderListView, OrderStatsView
+from user.api.admin_setup_views import create_admin_user, check_admin_exists
 from user.api.admin_revenue_views import AdminRevenueAnalyticsView, AdminRevenueChartView
 from user.api.admin_dashboard_stats import AdminDashboardStatsView, AdminRevenueBreakdownView, AdminTopVendorsView, AdminOrderActivityView
 from user.api.admin_user_management import UserSuspensionView, SuspendedUsersListView
@@ -92,4 +93,8 @@ urlpatterns = [
     path('orders/stats/', OrderStatsView.as_view(), name='admin-orders-stats'),
     # Activity and analytics
     path('', include('analytics.urls')),
+    
+    # Admin setup endpoints (one-time use)
+    path('setup/create-admin/', create_admin_user, name='admin-create-admin'),
+    path('setup/check-admin/', check_admin_exists, name='admin-check-admin'),
 ]
