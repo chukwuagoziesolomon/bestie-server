@@ -21,7 +21,8 @@ const GoogleSignIn = ({ buttonText = 'Sign in with Google' }) => {
   const handleCredentialResponse = async (response) => {
     try {
       // Send the credential to your backend
-      const result = await axios.post('http://localhost:8000/api/auth/social/google/', {
+      const API_URL = process.env.REACT_APP_API_URL || 'https://bestie-server.onrender.com';
+      const result = await axios.post(`${API_URL}/api/auth/social/google/`, {
         credential: response.credential,
       });
 

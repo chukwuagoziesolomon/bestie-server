@@ -1,10 +1,12 @@
 // Google OAuth configuration
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://bestie-server.onrender.com';
+
 export const GOOGLE_OAUTH_CONFIG = {
     clientId: 'YOUR_GOOGLE_CLIENT_ID', // Replace with your Google OAuth client ID
     scope: 'profile email',
-    redirectUri: 'http://localhost:8000/auth/google/callback',
+    redirectUri: `${API_BASE_URL}/auth/google/callback`,
     authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
-    tokenUrl: 'http://localhost:8000/api/auth/google/',
+    tokenUrl: `${API_BASE_URL}/api/auth/google/`,
     userInfoUrl: 'https://www.googleapis.com/oauth2/v3/userinfo',
     // Add any additional OAuth parameters as needed
     params: {
@@ -37,7 +39,7 @@ export async function handleGoogleCallback() {
     
     if (code) {
         try {
-            const response = await fetch('http://localhost:8000/api/auth/social/google/', {
+            const response = await fetch(`${API_BASE_URL}/api/auth/social/google/`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
