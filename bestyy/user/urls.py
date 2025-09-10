@@ -21,6 +21,7 @@ from .api.user_views import (
     AdminUserCreateView, AdminUserUpdateView, AdminUserDeleteView,
     CurrentUserView, UserOrdersView, UserOrderDetailView, UserAddressListView, UserAddressDetailView, UserAddressSetDefaultView, UserFavoritesListView, UserFavoritesDetailView, UserFoodFavoritesView, UserVenueFavoritesView, UserAutoFavoriteView, MultiRoleRegistrationView
 )
+from .cors_test import cors_test
 from .api.courier_dashboard_views import (
     dashboard_analytics,
     earnings_chart_data,
@@ -172,6 +173,8 @@ urlpatterns = [
     path('test/menu-image-upload/', views.test_menu_image_upload, name='test-menu-image-upload'),
     path('test/auth/', views.test_auth, name='test-auth'),
     path('test/vendor-auth/', views.test_vendor_auth, name='test-vendor-auth'),
+    # CORS test endpoint
+    path('cors-test/', cors_test, name='cors-test'),
     # Include role management endpoints
     path('', include(role_urls)),
     # Include courier API endpoints under /api/user/

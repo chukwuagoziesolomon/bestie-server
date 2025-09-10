@@ -1,0 +1,156 @@
+# Generated manually for WhatsApp AI app
+
+from django.conf import settings
+from django.db import migrations, models
+import django.db.models.deletion
+import uuid
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = [
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name='WhatsAppConversation',
+            fields=[
+                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('phone_number', models.CharField(help_text='WhatsApp phone number', max_length=20, unique=True)),
+                ('is_active', models.BooleanField(default=True)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('updated_at', models.DateTimeField(auto_now=True)),
+                ('last_message_at', models.DateTimeField(blank=True, null=True)),
+                ('language', models.CharField(default='en', help_text='Preferred language', max_length=10)),
+                ('timezone', models.CharField(default='UTC', max_length=50)),
+                ('user', models.ForeignKey(blank=True, help_text='Associated user if linked to account', null=True, on_delete=django.db.models.deletion.SET_NULL, to=settings.AUTH_USER_MODEL)),
+            ],
+            options={
+                'db_table': 'whatsapp_conversations',
+                'ordering': ['-last_message_at', '-created_at'],
+            },
+        ),
+        migrations.CreateModel(
+            name='AIResponseTemplate',
+            fields=[
+                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('category', models.CharField(choices=[('greeting', 'Greeting'), ('order_inquiry', 'Order Inquiry'), ('menu_request', 'Menu Request'), ('delivery_status', 'Delivery Status'), ('payment_help', 'Payment Help'), ('complaint', 'Complaint'), ('general_info', 'General Information'), ('fallback', 'Fallback Response')], max_length=50)),
+                ('language', models.CharField(default='en', max_length=10)),
+                ('template_text', models.TextField(help_text='Template text with placeholders')),
+                ('variables', models.JSONField(default=list, help_text='List of variable names used in template')),
+                ('ai_model', models.CharField(default='meta-llama/llama-3.3-8b-instruct:free', max_length=100)),
+                ('temperature', models.FloatField(default=0.7)),
+                ('max_tokens', models.IntegerField(default=150)),
+                ('is_active', models.BooleanField(default=True)),
+                ('usage_count', models.PositiveIntegerField(default=0)),
+                ('success_rate', models.FloatField(default=0.0, help_text='Success rate of this template')),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('updated_at', models.DateTimeField(auto_now=True)),
+            ],
+            options={
+                'db_table': 'ai_response_templates',
+                'ordering': ['category', 'language'],
+            },
+        ),
+        migrations.CreateModel(
+            name='WhatsAppMessage',
+            fields=[
+                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('message_id', models.CharField(help_text='WhatsApp message ID', max_length=255, unique=True)),
+                ('message_type', models.CharField(choices=[('text', 'Text'), ('image', 'Image'), ('audio', 'Audio'), ('video', 'Video'), ('document', 'Document'), ('location', 'Location'), ('contact', 'Contact'), ('sticker', 'Sticker')], default='text', max_length=20)),
+                ('content', models.TextField(help_text='Message content/text')),
+                ('media_url', models.URLField(blank=True, help_text='URL to media file if applicable', null=True)),
+                ('direction', models.CharField(choices=[('inbound', 'Inbound (from user)'), ('outbound', 'Outbound (to user)')], max_length=10)),
+                ('timestamp', models.DateTimeField(default=django.utils.timezone.now)),
+                ('is_read', models.BooleanField(default=False)),
+                ('is_ai_processed', models.BooleanField(default=False)),
+                ('ai_response', models.TextField(blank=True, help_text='AI generated response', null=True)),
+                ('ai_confidence', models.FloatField(blank=True, help_text='AI confidence score', null=True)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('conversation', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='messages', to='whatsapp_ai.whatsappconversation')),
+            ],
+            options={
+                'db_table': 'whatsapp_messages',
+                'ordering': ['-timestamp'],
+            },
+        ),
+        migrations.CreateModel(
+            name='AIProcessingLog',
+            fields=[
+                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('status', models.CharField(choices=[('processing', 'Processing'), ('success', 'Success'), ('error', 'Error'), ('timeout', 'Timeout')], max_length=20)),
+                ('processing_time', models.FloatField(help_text='Processing time in seconds')),
+                ('tokens_used', models.IntegerField(blank=True, null=True)),
+                ('cost', models.DecimalField(blank=True, decimal_places=6, max_digits=10, null=True)),
+                ('error_message', models.TextField(blank=True, null=True)),
+                ('error_code', models.CharField(blank=True, max_length=50, null=True)),
+                ('ai_model_used', models.CharField(max_length=100)),
+                ('prompt_tokens', models.IntegerField(blank=True, null=True)),
+                ('completion_tokens', models.IntegerField(blank=True, null=True)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('message', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='ai_logs', to='whatsapp_ai.whatsappmessage')),
+                ('template', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, to='whatsapp_ai.airesponsetemplate')),
+            ],
+            options={
+                'db_table': 'ai_processing_logs',
+                'ordering': ['-created_at'],
+            },
+        ),
+        migrations.CreateModel(
+            name='WhatsAppWebhookLog',
+            fields=[
+                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('event_type', models.CharField(choices=[('message', 'Message'), ('status', 'Status Update'), ('error', 'Error'), ('verification', 'Verification')], max_length=20)),
+                ('webhook_data', models.JSONField(help_text='Raw webhook payload')),
+                ('is_processed', models.BooleanField(default=False)),
+                ('processing_time', models.FloatField(blank=True, null=True)),
+                ('error_message', models.TextField(blank=True, null=True)),
+                ('ip_address', models.GenericIPAddressField(blank=True, null=True)),
+                ('user_agent', models.TextField(blank=True, null=True)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+            ],
+            options={
+                'db_table': 'whatsapp_webhook_logs',
+                'ordering': ['-created_at'],
+            },
+        ),
+        migrations.AddIndex(
+            model_name='whatsappmessage',
+            index=models.Index(fields=['conversation', 'timestamp'], name='whatsapp_me_convers_8b2b5a_idx'),
+        ),
+        migrations.AddIndex(
+            model_name='whatsappmessage',
+            index=models.Index(fields=['message_id'], name='whatsapp_me_message_8b2b5a_idx'),
+        ),
+        migrations.AddIndex(
+            model_name='whatsappmessage',
+            index=models.Index(fields=['is_ai_processed'], name='whatsapp_me_is_ai_p_8b2b5a_idx'),
+        ),
+        migrations.AddIndex(
+            model_name='aiprocessinglog',
+            index=models.Index(fields=['status'], name='ai_process_status_8b2b5a_idx'),
+        ),
+        migrations.AddIndex(
+            model_name='aiprocessinglog',
+            index=models.Index(fields=['created_at'], name='ai_process_created_8b2b5a_idx'),
+        ),
+        migrations.AddIndex(
+            model_name='whatsappwebhooklog',
+            index=models.Index(fields=['event_type'], name='whatsapp_we_event_t_8b2b5a_idx'),
+        ),
+        migrations.AddIndex(
+            model_name='whatsappwebhooklog',
+            index=models.Index(fields=['is_processed'], name='whatsapp_we_is_proc_8b2b5a_idx'),
+        ),
+        migrations.AddIndex(
+            model_name='whatsappwebhooklog',
+            index=models.Index(fields=['created_at'], name='whatsapp_we_created_8b2b5a_idx'),
+        ),
+        migrations.AlterUniqueTogether(
+            name='airesponsetemplate',
+            unique_together={('category', 'language')},
+        ),
+    ]

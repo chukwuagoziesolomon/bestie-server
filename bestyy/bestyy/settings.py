@@ -36,6 +36,16 @@ BASE_URL = config('BASE_URL', default='http://127.0.0.1:8000')
 # Google OAuth settings
 GOOGLE_OAUTH_REDIRECT_URI = f"{BASE_URL}/auth/google/callback/"
 
+# OpenRouter AI settings
+OPENROUTER_API_KEY = config('OPENROUTER_API_KEY', default='')
+OPENROUTER_APP_URL = config('OPENROUTER_APP_URL', default='https://your-app.com')
+OPENROUTER_APP_NAME = config('OPENROUTER_APP_NAME', default='WhatsApp AI Bot')
+
+# WhatsApp settings
+WHATSAPP_VERIFY_TOKEN = config('WHATSAPP_VERIFY_TOKEN', default='your_verify_token')
+WHATSAPP_ACCESS_TOKEN = config('WHATSAPP_ACCESS_TOKEN', default='')
+WHATSAPP_PHONE_NUMBER_ID = config('WHATSAPP_PHONE_NUMBER_ID', default='')
+
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='bestie-server.onrender.com,localhost,127.0.0.1,*.onrender.com').split(',')
 print(f"ALLOWED_HOSTS set to: {ALLOWED_HOSTS}")
 
@@ -78,6 +88,7 @@ LOCAL_APPS = [
     'courier',
     'notification',
     'utils',
+    'whatsapp_ai',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -216,16 +227,40 @@ REST_FRAMEWORK = {
 # CORS settings
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
+
+# Default CORS allowed origins (for development)
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
-    'http://localhost:3001',
-    'http://127.0.0.1:3001',
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
     'http://localhost:8000',
     'http://127.0.0.1:8000',
 ]
+
+print(f"Default CORS_ALLOWED_ORIGINS: {CORS_ALLOWED_ORIGINS}")
+
+# CORS allowed headers
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+
+# CORS allowed methods
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+# Remove duplicate - CORS_ALLOWED_ORIGINS is already defined above
 
 # JWT Settings
 SIMPLE_JWT = {
@@ -303,7 +338,19 @@ if not DEBUG:
     print(f"=================================")
     
     # Update CORS origins for production
-    CORS_ALLOWED_ORIGINS = config('CORS_ALLOWED_ORIGINS', default='').split(',')
+    CORS_ALLOWED_ORIGINS = [
+        'https://bestyy-web.vercel.app',
+        'https://bestie-server.onrender.com',
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+    ]
+    
+    # Also allow the environment variable if set
+    env_cors_origins = config('CORS_ALLOWED_ORIGINS', default='')
+    if env_cors_origins:
+        CORS_ALLOWED_ORIGINS.extend(env_cors_origins.split(','))
+    
+    print(f"CORS_ALLOWED_ORIGINS set to: {CORS_ALLOWED_ORIGINS}")
     
     # Update WebSocket URL for production
     WEBSOCKET_BASE_URL = config('WEBSOCKET_BASE_URL', default='wss://bestie-server.onrender.com')

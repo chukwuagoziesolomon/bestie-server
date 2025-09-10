@@ -70,6 +70,7 @@ urlpatterns = [
     # API endpoints
     path('api/user/', include(('user.urls', 'user'), namespace='user')),  # User-related endpoints
     path('api/orders/', include('order.urls')),  # Order-related endpoints
+    path('api/whatsapp/', include('whatsapp_ai.urls')),  # WhatsApp AI endpoints
     
     # For backward compatibility with frontend making requests to /api/api/user/
     path('api/api/user/', include('user.urls')),
