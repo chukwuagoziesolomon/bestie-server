@@ -19,6 +19,7 @@ from user.api.user_views import UserDetailView
 from analytics.views import RecentActivityView
 from user.api.admin_order_views import AdminOrderListView, OrderStatsView
 from user.api.admin_setup_views import create_admin_user, check_admin_exists
+from user.api.cloudinary_test_views import test_cloudinary_config, test_cloudinary_upload
 from user.api.admin_revenue_views import AdminRevenueAnalyticsView, AdminRevenueChartView
 from user.api.admin_dashboard_stats import AdminDashboardStatsView, AdminRevenueBreakdownView, AdminTopVendorsView, AdminOrderActivityView
 from user.api.admin_user_management import UserSuspensionView, SuspendedUsersListView
@@ -97,4 +98,8 @@ urlpatterns = [
     # Admin setup endpoints (one-time use)
     path('setup/create-admin/', create_admin_user, name='admin-create-admin'),
     path('setup/check-admin/', check_admin_exists, name='admin-check-admin'),
+    
+    # Cloudinary test endpoints
+    path('cloudinary/config/', test_cloudinary_config, name='admin-cloudinary-config'),
+    path('cloudinary/upload/', test_cloudinary_upload, name='admin-cloudinary-upload'),
 ]

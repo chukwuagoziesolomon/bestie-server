@@ -296,6 +296,7 @@ CLOUDINARY = {
     'cloud_name': config('CLOUDINARY_CLOUD_NAME', default=''),
     'api_key': config('CLOUDINARY_API_KEY', default=''),
     'api_secret': config('CLOUDINARY_API_SECRET', default=''),
+    'upload_preset': config('CLOUDINARY_UPLOAD_PRESET', default='bestie AI'),
 }
 
 # Channels/WebSocket settings
