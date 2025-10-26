@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment Receipt - Bestyy</title>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Montserrat', sans-serif;
+            background-color: #f8fafc;
+            line-height: 1.6;
+            color: #334155;
+        }
+        
+        .receipt-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+            border-radius: 16px;
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(90deg, #23C7B2 0%, #25AC9B 100%);
+            padding: 40px 30px;
+            text-align: center;
+            color: white;
+        }
+        
+        .logo {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            letter-spacing: 1px;
+        }
+        
+        .receipt-title {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        
+        .receipt-subtitle {
+            font-size: 16px;
+            opacity: 0.9;
+            font-weight: 400;
+        }
+        
+        .content {
+            padding: 40px 30px;
+        }
+        
+        .order-info {
+            background-color: #f1f5f9;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 32px;
+        }
+        
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            font-size: 15px;
+        }
+        
+        .info-row:last-child {
+            margin-bottom: 0;
+        }
+        
+        .info-label {
+            font-weight: 600;
+            color: #64748b;
+        }
+        
+        .info-value {
+            font-weight: 600;
+            color: #1e293b;
+        }
+        
+        .order-number {
+            font-size: 18px;
+            color: #23C7B2;
+            font-weight: 700;
+        }
+        
+        .items-section {
+            margin-bottom: 32px;
+        }
+        
+        .section-title {
+            font-size: 20px;
+            font-weight: 600;
+            color: #1e293b;
+            margin-bottom: 20px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #e2e8f0;
+        }
+        
+        .item {
+            display: flex;
+            align-items: center;
+            padding: 16px 0;
+            border-bottom: 1px solid #f1f5f9;
+        }
+        
+        .item:last-child {
+            border-bottom: none;
+        }
+        
+        .item-image {
+            width: 60px;
+            height: 60px;
+            border-radius: 8px;
+            object-fit: cover;
+            margin-right: 16px;
+            background-color: #f1f5f9;
+        }
+        
+        .item-details {
+            flex: 1;
+        }
+        
+        .item-name {
+            font-size: 16px;
+            font-weight: 600;
+            color: #1e293b;
+            margin-bottom: 4px;
+        }
+        
+        .item-description {
+            font-size: 14px;
+            color: #64748b;
+            margin-bottom: 4px;
+        }
+        
+        .item-quantity {
+            font-size: 14px;
+            color: #64748b;
+        }
+        
+        .item-price {
+            font-size: 16px;
+            font-weight: 600;
+            color: #1e293b;
+            text-align: right;
+        }
+        
+        .summary-section {
+            background-color: #f8fafc;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 32px;
+        }
+        
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            font-size: 15px;
+        }
+        
+        .summary-row:last-child {
+            margin-bottom: 0;
+            padding-top: 12px;
+            border-top: 2px solid #e2e8f0;
+            font-size: 18px;
+            font-weight: 700;
+            color: #1e293b;
+        }
+        
+        .summary-label {
+            color: #64748b;
+        }
+        
+        .summary-value {
+            font-weight: 600;
+            color: #1e293b;
+        }
+        
+        .total-amount {
+            color: #23C7B2 !important;
+            font-size: 20px !important;
+        }
+        
+        .payment-info {
+            background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+            border: 1px solid #bbf7d0;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 32px;
+        }
+        
+        .payment-status {
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        
+        .status-icon {
+            width: 20px;
+            height: 20px;
+            background-color: #22c55e;
+            border-radius: 50%;
+            margin-right: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 12px;
+        }
+        
+        .status-text {
+            font-size: 16px;
+            font-weight: 600;
+            color: #15803d;
+        }
+        
+        .payment-method {
+            font-size: 14px;
+            color: #166534;
+        }
+        
+        .delivery-info {
+            background-color: #fef3c7;
+            border: 1px solid #fde68a;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 32px;
+        }
+        
+        .delivery-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #92400e;
+            margin-bottom: 8px;
+        }
+        
+        .delivery-address {
+            font-size: 14px;
+            color: #a16207;
+            line-height: 1.5;
+        }
+        
+        .footer {
+            background-color: #f8fafc;
+            padding: 30px;
+            text-align: center;
+            border-top: 1px solid #e2e8f0;
+        }
+        
+        .footer-text {
+            font-size: 14px;
+            color: #64748b;
+            margin-bottom: 16px;
+        }
+        
+        .social-links {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+        
+        .social-link {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(90deg, #23C7B2 0%, #25AC9B 100%);
+            border-radius: 50%;
+            text-decoration: none;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            transition: transform 0.2s ease;
+        }
+        
+        .social-link:hover {
+            transform: translateY(-2px);
+        }
+        
+        .company-info {
+            font-size: 12px;
+            color: #94a3b8;
+        }
+        
+        .divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent 0%, #e2e8f0 50%, transparent 100%);
+            margin: 24px 0;
+        }
+        
+        @media (max-width: 600px) {
+            .receipt-container {
+                margin: 0;
+                border-radius: 0;
+            }
+            
+            .header, .content, .footer {
+                padding: 24px 20px;
+            }
+            
+            .info-row, .summary-row {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 4px;
+            }
+            
+            .item {
+                flex-direction: column;
+                align-items: flex-start;
+                text-align: left;
+            }
+            
+            .item-image {
+                margin-right: 0;
+                margin-bottom: 12px;
+            }
+            
+            .item-price {
+                text-align: left;
+                margin-top: 8px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="receipt-container">
+        <!-- Header -->
+        <div class="header">
+            <div class="logo">Bestyy</div>
+            <div class="receipt-title">Payment Receipt</div>
+            <div class="receipt-subtitle">Thank you for your order!</div>
+        </div>
+        
+        <!-- Content -->
+        <div class="content">
+            <!-- Order Information -->
+            <div class="order-info">
+                <div class="info-row">
+                    <span class="info-label">Order Number:</span>
+                    <span class="info-value order-number">#{{ order_id }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Order Date:</span>
+                    <span class="info-value">{{ order_date }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Customer:</span>
+                    <span class="info-value">{{ customer_name }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Vendor:</span>
+                    <span class="info-value">{{ vendor_name }}</span>
+                </div>
+            </div>
+            
+            <!-- Items Ordered -->
+            <div class="items-section">
+                <div class="section-title">Items Ordered</div>
+                {% for item in items %}
+                <div class="item">
+                    <img src="{{ item.image_url }}" alt="{{ item.name }}" class="item-image" onerror="this.style.display='none'">
+                    <div class="item-details">
+                        <div class="item-name">{{ item.name }}</div>
+                        {% if item.description %}
+                        <div class="item-description">{{ item.description }}</div>
+                        {% endif %}
+                        <div class="item-quantity">Quantity: {{ item.quantity }}</div>
+                    </div>
+                    <div class="item-price">₦{{ item.total_price|floatformat:2 }}</div>
+                </div>
+                {% endfor %}
+            </div>
+            
+            <div class="divider"></div>
+            
+            <!-- Order Summary -->
+            <div class="summary-section">
+                <div class="summary-row">
+                    <span class="summary-label">Subtotal:</span>
+                    <span class="summary-value">₦{{ subtotal|floatformat:2 }}</span>
+                </div>
+                {% if delivery_fee > 0 %}
+                <div class="summary-row">
+                    <span class="summary-label">Delivery Fee:</span>
+                    <span class="summary-value">₦{{ delivery_fee|floatformat:2 }}</span>
+                </div>
+                {% endif %}
+                {% if service_fee > 0 %}
+                <div class="summary-row">
+                    <span class="summary-label">Service Fee:</span>
+                    <span class="summary-value">₦{{ service_fee|floatformat:2 }}</span>
+                </div>
+                {% endif %}
+                {% if discount > 0 %}
+                <div class="summary-row">
+                    <span class="summary-label">Discount:</span>
+                    <span class="summary-value" style="color: #22c55e;">-₦{{ discount|floatformat:2 }}</span>
+                </div>
+                {% endif %}
+                <div class="summary-row">
+                    <span class="summary-label">Total Amount:</span>
+                    <span class="summary-value total-amount">₦{{ total_amount|floatformat:2 }}</span>
+                </div>
+            </div>
+            
+            <!-- Payment Information -->
+            <div class="payment-info">
+                <div class="payment-status">
+                    <div class="status-icon">✓</div>
+                    <div class="status-text">Payment Successful</div>
+                </div>
+                <div class="payment-method">Paid via {{ payment_method|title }}</div>
+                {% if payment_reference %}
+                <div class="payment-method">Reference: {{ payment_reference }}</div>
+                {% endif %}
+            </div>
+            
+            <!-- Delivery Information -->
+            <div class="delivery-info">
+                <div class="delivery-title">Delivery Address</div>
+                <div class="delivery-address">{{ delivery_address }}</div>
+                {% if estimated_delivery %}
+                <div class="delivery-address" style="margin-top: 8px;">
+                    <strong>Estimated Delivery:</strong> {{ estimated_delivery }}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- Footer -->
+        <div class="footer">
+            <div class="footer-text">
+                Questions about your order? Contact us at support@bestyy.com
+            </div>
+            <div class="social-links">
+                <a href="#" class="social-link">📱</a>
+                <a href="#" class="social-link">📧</a>
+                <a href="#" class="social-link">🌐</a>
+            </div>
+            <div class="company-info">
+                Bestyy - Your trusted delivery partner<br>
+                This is an automated receipt. Please keep it for your records.
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+
+

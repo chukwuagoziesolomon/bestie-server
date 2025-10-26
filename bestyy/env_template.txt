@@ -1,0 +1,20 @@
+# WhatsApp Meta Business API Configuration
+# Copy this file to .env and fill in your actual values
+
+# Generate a secure verify token (32+ characters)
+# You can use: python -c "import secrets; print(secrets.token_urlsafe(32))"
+WHATSAPP_VERIFY_TOKEN=_EPmQOB2Fxjln47xEhmXPBurta2Q_biBfIOoW5BW2wE
+
+# Get these from Meta Developer Console > WhatsApp > API Setup
+WHATSAPP_ACCESS_TOKEN=your_meta_access_token_here
+WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id_here
+
+# Get this from Meta Developer Console > App Settings > Basic
+META_APP_SECRET=your_meta_app_secret_here
+
+# OpenRouter AI Configuration (for WhatsApp responses)
+OPENROUTER_API_KEY=your_openrouter_api_key_here
+OPENROUTER_APP_URL=https://your-app.com
+OPENROUTER_APP_NAME=WhatsApp AI Bot
+
+

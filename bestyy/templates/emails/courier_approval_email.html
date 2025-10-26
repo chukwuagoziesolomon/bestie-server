@@ -1,0 +1,154 @@
+
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Bestyy</title>
+            <style>
+                body {
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    line-height: 1.6;
+                    color: #2D3748;
+                    margin: 0;
+                    padding: 0;
+                    background-color: #f8f9fa;
+                }
+                .container {
+                    max-width: 600px;
+                    margin: 0 auto;
+                    background-color: white;
+                    border-radius: 12px;
+                    overflow: hidden;
+                    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+                }
+                .header {
+                    background: linear-gradient(90deg, #23C7B2 0%, #25AC9B 100%);
+                    padding: 30px 20px;
+                    text-align: center;
+                    color: white;
+                }
+                .logo {
+                    max-width: 150px;
+                    height: auto;
+                    margin-bottom: 10px;
+                }
+                .header h1 {
+                    margin: 0;
+                    font-size: 24px;
+                    font-weight: 600;
+                }
+                .content {
+                    padding: 30px 20px;
+                }
+                .status-badge {
+                    display: inline-block;
+                    padding: 8px 16px;
+                    border-radius: 20px;
+                    font-weight: 600;
+                    font-size: 14px;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                }
+                .status-approved {
+                    background-color: #D4EDDA;
+                    color: #155724;
+                }
+                .status-rejected {
+                    background-color: #F8D7DA;
+                    color: #721C24;
+                }
+                .status-pending {
+                    background-color: #FFF3CD;
+                    color: #856404;
+                }
+                .info-box {
+                    background-color: #F7FAFC;
+                    border-left: 4px solid #23C7B2;
+                    padding: 20px;
+                    margin: 20px 0;
+                    border-radius: 8px;
+                }
+                .action-button {
+                    display: inline-block;
+                    background: linear-gradient(90deg, #23C7B2 0%, #25AC9B 100%);
+                    color: white;
+                    text-decoration: none;
+                    padding: 12px 24px;
+                    border-radius: 8px;
+                    font-weight: 600;
+                    margin: 10px 5px;
+                    text-align: center;
+                    transition: opacity 0.3s ease;
+                }
+                .action-button:hover {
+                    opacity: 0.9;
+                }
+                .footer {
+                    background-color: #f8f9fa;
+                    padding: 20px;
+                    text-align: center;
+                    color: #718096;
+                    font-size: 14px;
+                    border-top: 1px solid #e2e8f0;
+                }
+                .social-links {
+                    margin: 15px 0;
+                }
+                .social-links a {
+                    color: #23C7B2;
+                    text-decoration: none;
+                    margin: 0 10px;
+                    font-weight: 500;
+                }
+                .contact-info {
+                    margin: 15px 0;
+                }
+                .contact-info p {
+                    margin: 5px 0;
+                }
+                @media (max-width: 600px) {
+                    .container {
+                        margin: 10px;
+                        border-radius: 8px;
+                    }
+                    .header {
+                        padding: 20px 15px;
+                    }
+                    .content {
+                        padding: 20px 15px;
+                    }
+                    .action-button {
+                        display: block;
+                        margin: 10px 0;
+                    }
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <img src="http://127.0.0.1:8000/static/images/logo.png" alt="Bestyy Logo" class="logo">
+                    <h1>Bestyy</h1>
+                    <p>Connecting Customers with Local Vendors</p>
+                </div>
+                <div class="content">
+                    {CONTENT}
+                </div>
+                <div class="footer">
+                    <div class="contact-info">
+                        <p><strong>Need Help?</strong></p>
+                        <p>📧 support@bestyy.com | 📞 +234-XXX-XXXX</p>
+                    </div>
+                    <div class="social-links">
+                        <a href="#">Facebook</a> |
+                        <a href="#">Twitter</a> |
+                        <a href="#">Instagram</a>
+                    </div>
+                    <p>This is an automated notification from Bestyy.<br>
+                    © 2024 Bestyy. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        

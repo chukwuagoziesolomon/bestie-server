@@ -1,7 +1,5 @@
-import os
-import sys
+# This will make sure the app is always imported when
+# Django starts so that shared_task will use this app.
+from .celery import app as celery_app
 
-# Add the project root directory to the Python path
-project_root = os.path.dirname(os.path.abspath(__file__))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+__all__ = ('celery_app',)
