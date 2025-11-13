@@ -660,7 +660,7 @@ class OrderNotificationService:
                     'email': order.user.email,
                     'phone': getattr(order.user, 'phone', 'Not provided')
                 },
-                'total_amount': float(order.total_price)
+                'total_amount': float(order.total_amount)
             }
             
             # Send notifications

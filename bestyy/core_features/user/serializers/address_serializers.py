@@ -2,12 +2,12 @@
 Address-related serializers.
 """
 from rest_framework import serializers
-from user.models import Address
+from ..models import Address
 
 
 class AddressSerializer(serializers.ModelSerializer):
     address_type = serializers.ChoiceField(
-        choices=Address.ADDRESS_TYPES,
+        choices=Address.ADDRESS_TYPE_CHOICES,
         error_messages={'required': 'Please select an address type.'}
     )
     address = serializers.CharField(
@@ -39,10 +39,16 @@ class AddressSerializer(serializers.ModelSerializer):
         read_only_fields = ['created_at', 'updated_at']
 
     def create(self, validated_data):
-        validated_data['user'] = self.context['request'].user
-        # Set default values for required fields that are not in the simplified payload
-        validated_data['full_name'] = self.context['request'].user.get_full_name() or self.context['request'].user.username
-        validated_data['phone_number'] = getattr(self.context['request'].user.profile, 'phone', '')
+        request = self.context.get('request')
+        if request and request.user and request.user.is_authenticated:
+            validated_data['user'] = request.user
+            # Set default values for required fields that are not in the simplified payload
+            validated_data['full_name'] = request.user.get_full_name() or request.user.username
+            validated_data['phone_number'] = getattr(request.user.profile, 'phone', '')
+        else:
+            # For anonymous users, set default values
+            validated_data['full_name'] = 'Anonymous User'
+            validated_data['phone_number'] = ''
         return super().create(validated_data)
 
 

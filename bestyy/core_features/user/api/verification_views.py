@@ -9,8 +9,238 @@ from django.shortcuts import get_object_or_404
 from bestyy.core_features.user.models import User, VendorProfile, CourierProfile, UserProfile
 from bestyy.core_features.user.services.verification_service import VerificationService
 import logging
+import random
+import re
+from django.utils import timezone
+from datetime import timedelta
+from ..models import PendingUser
 
 logger = logging.getLogger(__name__)
+
+
+def _process_whatsapp_signup_core(phone: str, code: str):
+    """Shared core logic for verifying WhatsApp signup.
+    Returns tuple (ok: bool, payload: dict, http_status: int).
+    """
+    if not phone or not code:
+        error_msg = 'Phone number and verification code are required'
+        if not phone and not code:
+            error_msg = 'Both phone number and verification code are required'
+        elif not phone:
+            error_msg = 'Phone number is required'
+        elif not code:
+            error_msg = 'Verification code is required'
+        logger.warning(f"[CORE_VERIFY] Missing required fields: phone={bool(phone)}, code={bool(code)}")
+        return False, {'error': error_msg}, status.HTTP_400_BAD_REQUEST
+
+    normalized_phone = phone.replace('+', '').replace(' ', '').replace('-', '').strip()
+    code = code.strip()
+
+    logger.info(f"[CORE_VERIFY] Processing verification: phone={normalized_phone}, code={code}")
+
+    try:
+        # Find pending user by code first, then check if phone matches (normalized)
+        pending_qs = PendingUser.objects.filter(
+            verification_code=code,
+            is_verified=False
+        )
+        logger.info(f"[CORE_VERIFY] Found {pending_qs.count()} pending users with code {code}")
+        
+        pending = pending_qs.first()
+        
+        if not pending:
+            logger.warning(f"[CORE_VERIFY] No pending user found with code {code}")
+            return False, {'error': 'Invalid verification code. Please check your code and try again.'}, status.HTTP_400_BAD_REQUEST
+        
+        # Normalize the stored phone and compare
+        stored_phone_normalized = pending.phone.replace('+', '').replace(' ', '').replace('-', '').strip()
+        logger.info(f"[CORE_VERIFY] Comparing phones: stored={stored_phone_normalized}, provided={normalized_phone}")
+        
+        if stored_phone_normalized != normalized_phone:
+            logger.warning(f"[CORE_VERIFY] Phone mismatch: stored={stored_phone_normalized}, provided={normalized_phone}")
+            return False, {'error': 'Verification code does not match this phone number. Please verify the code was sent to this number.'}, status.HTTP_400_BAD_REQUEST
+    except Exception as e:
+        logger.error(f"[CORE_VERIFY] Error looking up pending user: {str(e)}", exc_info=True)
+        return False, {'error': f'Error processing verification: {str(e)}'}, status.HTTP_500_INTERNAL_SERVER_ERROR
+
+    if pending.is_expired:
+        logger.warning(f"[CORE_VERIFY] Verification code expired for pending user {pending.id}")
+        return False, {'error': 'Verification code expired. Please request a new code.'}, status.HTTP_410_GONE
+
+    # Check phone registration status with role-specific handling
+    try:
+        clean_phone = normalized_phone
+
+        # Check each role separately to provide specific feedback
+        user_profile_exists = UserProfile.objects.filter(phone__icontains=clean_phone).exists()
+        vendor_profile_exists = VendorProfile.objects.filter(phone__icontains=clean_phone).exists()
+        courier_profile_exists = CourierProfile.objects.filter(phone__icontains=clean_phone).exists()
+
+        # Get the pending user's desired role
+        desired_role = pending.user_type
+
+        # Check if this specific role is already registered
+        role_already_registered = False
+        existing_roles = []
+
+        if user_profile_exists:
+            existing_roles.append('user')
+            if desired_role == 'user':
+                role_already_registered = True
+
+        if vendor_profile_exists:
+            existing_roles.append('vendor')
+            if desired_role == 'vendor':
+                role_already_registered = True
+
+        if courier_profile_exists:
+            existing_roles.append('courier')
+            if desired_role == 'courier':
+                role_already_registered = True
+
+        if role_already_registered:
+            # User already has this role registered
+            logger.warning(f"[CORE_VERIFY] Phone number {clean_phone} already registered for {desired_role} role")
+            return False, {
+                'error': f'This phone number is already registered as a {desired_role}. Please use a different number or log in to your existing account.',
+                'existing_roles': existing_roles,
+                'desired_role': desired_role,
+                'role_conflict': True
+            }, status.HTTP_400_BAD_REQUEST
+        elif existing_roles:
+            # User has other roles but not this one - allow registration
+            logger.info(f"[CORE_VERIFY] Phone number {clean_phone} registered for roles {existing_roles}, allowing {desired_role} registration")
+            # Continue with registration - this is the desired behavior
+
+    except Exception as e:
+        logger.error(f"[CORE_VERIFY] Error checking phone existence: {str(e)}", exc_info=True)
+        # Continue anyway, don't fail on this check
+
+    logger.info(f"[CORE_VERIFY] Creating user account for pending user {pending.id}")
+    user, msg = pending.create_user_account()
+    if not user:
+        logger.error(f"[CORE_VERIFY] Account creation failed: {msg}")
+        return False, {'error': msg or 'Account creation failed. Please contact support.'}, status.HTTP_400_BAD_REQUEST
+
+    roles = user.get_roles() if hasattr(user, 'get_roles') else []
+    primary_role = roles[0] if roles else getattr(user, 'role', 'user')
+
+    logger.info(f"[CORE_VERIFY] Successfully created user {user.id} with role {primary_role}")
+    return True, {
+        'role': primary_role,
+        'user_id': str(user.id),
+        'first_name': user.first_name or '',
+        'verification_complete': True  # Signal to frontend to hide countdown
+    }, status.HTTP_200_OK
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def check_verification_status(request):
+    """
+    Check verification status for a phone number.
+    GET /api/auth/verification-status/?phone=+2348012345678
+    """
+    try:
+        phone = request.GET.get('phone', '').strip()
+        if not phone:
+            return Response({
+                'ok': False,
+                'error': 'Phone number is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Normalize phone for matching
+        normalized_phone = phone.replace('+', '').replace(' ', '').replace('-', '').strip()
+
+        # Find pending user with this phone
+        pending_qs = PendingUser.objects.filter(is_verified=False).order_by('-created_at')
+        pending = None
+        for pu in pending_qs:
+            stored_phone_normalized = pu.phone.replace('+', '').replace(' ', '').replace('-', '').strip()
+            if stored_phone_normalized == normalized_phone:
+                pending = pu
+                break
+
+        if not pending:
+            return Response({
+                'ok': False,
+                'error': 'No pending verification found for this phone number'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        if pending.is_verified:
+            return Response({
+                'ok': True,
+                'verified': True,
+                'verification_complete': True,
+                'message': 'Verification completed successfully'
+            })
+
+        if pending.is_expired:
+            return Response({
+                'ok': False,
+                'expired': True,
+                'error': 'Verification code has expired'
+            }, status=status.HTTP_410_GONE)
+
+        # Return current status
+        return Response({
+            'ok': True,
+            'verified': False,
+            'verification_complete': False,
+            'expires_at': pending.expires_at.isoformat(),
+            'time_remaining_seconds': max(0, int((pending.expires_at - timezone.now()).total_seconds()))
+        })
+
+    except Exception as e:
+        logger.error(f"[CHECK_STATUS] Unexpected error: {str(e)}", exc_info=True)
+        return Response({
+            'ok': False,
+            'error': f'Internal server error: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def verify_whatsapp_signup(request):
+    """HTTP endpoint wrapper around _process_whatsapp_signup_core."""
+    try:
+        # DRF automatically parses JSON/form data into request.data - use it directly
+        # Don't access request.body as it raises RawPostDataException after DRF reads it
+        phone = request.data.get('phone', '') or ''
+        code = request.data.get('code', '') or ''
+        
+        code_masked = f'{code[:2]}***' if len(code) > 2 else '***' if code else 'empty'
+        logger.info(f"[VERIFY_SIGNUP] Extracted phone: '{phone}', code: '{code_masked}'")
+        
+        # Validate that we have both phone and code before processing
+        if not phone or not code:
+            error_msg = 'Phone number and verification code are required'
+            if not phone and not code:
+                error_msg = 'Both phone number and verification code are required'
+            elif not phone:
+                error_msg = 'Phone number is required'
+            elif not code:
+                error_msg = 'Verification code is required'
+            
+            logger.warning(f"[VERIFY_SIGNUP] Validation failed: {error_msg}")
+            return Response({
+                'ok': False,
+                'error': error_msg,
+                'received_phone': bool(phone),
+                'received_code': bool(code)
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        ok, payload, http_status = _process_whatsapp_signup_core(phone, code)
+        body = {'ok': ok, **payload} if ok else {'ok': False, **payload}
+        logger.info(f"[VERIFY_SIGNUP] Processing result: ok={ok}, status={http_status}, payload={payload}")
+        return Response(body, status=http_status)
+    
+    except Exception as e:
+        logger.error(f"[VERIFY_SIGNUP] Unexpected error: {str(e)}", exc_info=True)
+        return Response({
+            'ok': False,
+            'error': f'Internal server error: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['POST'])
@@ -161,6 +391,14 @@ def verify_email(request):
 @permission_classes([AllowAny])
 def initiate_whatsapp_signup(request):
     """
+    DEPRECATED: WhatsApp signup is no longer supported.
+    Use MultiRoleRegistrationView instead.
+    """
+    return Response({
+        'success': False,
+        'error': 'WhatsApp signup is no longer supported. Please use the standard registration endpoint.'
+    }, status=status.HTTP_410_GONE)
+    """
     Initiate WhatsApp-based signup process
     POST /api/user/verification/initiate-whatsapp-signup/
     Body: {
@@ -173,7 +411,6 @@ def initiate_whatsapp_signup(request):
         ...profile_data
     }
     """
-    from ..models import PendingUser
     import random
 
     user_type = request.data.get('user_type')
@@ -254,6 +491,13 @@ def initiate_whatsapp_signup(request):
 @permission_classes([AllowAny])
 def get_verification_status(request):
     """
+    DEPRECATED: WhatsApp verification status is no longer supported.
+    """
+    return Response({
+        'success': False,
+        'error': 'WhatsApp verification is no longer supported.'
+    }, status=status.HTTP_410_GONE)
+    """
     Get verification status and WhatsApp link for pending user
     POST /api/user/verification/verification-status/
     Body: { "pending_user_id": 123 }
@@ -301,6 +545,13 @@ def get_verification_status(request):
 @permission_classes([AllowAny])
 def check_verification_complete(request):
     """
+    DEPRECATED: WhatsApp verification check is no longer supported.
+    """
+    return Response({
+        'success': False,
+        'error': 'WhatsApp verification is no longer supported.'
+    }, status=status.HTTP_410_GONE)
+    """
     Check if verification is complete and return user login info
     POST /api/user/verification/check-complete/
     Body: { "pending_user_id": 123 }
@@ -344,6 +595,13 @@ def check_verification_complete(request):
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def send_whatsapp_verification(request):
+    """
+    DEPRECATED: WhatsApp verification is no longer supported.
+    """
+    return Response({
+        'success': False,
+        'error': 'WhatsApp verification is no longer supported.'
+    }, status=status.HTTP_410_GONE)
     """
     Send WhatsApp verification code during signup
     POST /api/user/verification/send-whatsapp/
@@ -414,6 +672,13 @@ Bestyy Team"""
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def verify_whatsapp_code(request):
+    """
+    DEPRECATED: WhatsApp verification is no longer supported.
+    """
+    return Response({
+        'success': False,
+        'error': 'WhatsApp verification is no longer supported.'
+    }, status=status.HTTP_410_GONE)
     """
     Verify WhatsApp code during signup
     POST /api/user/verification/verify-whatsapp/
@@ -532,34 +797,19 @@ def verify_phone(request):
 
 
 @api_view(['POST'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def verify_bank_account(request):
     """
     Verify and save bank account details
     POST /api/user/verification/verify-bank/
     Body: {
-        "user_email": "user@example.com",
         "account_number": "1234567890",
         "account_name": "John Doe",
         "bank_name": "Access Bank"
     }
     Note: bank_code is optional - it will be automatically resolved from bank_name
     """
-    user_email = request.data.get('user_email')
-
-    if not user_email:
-        return Response({
-            'success': False,
-            'error': 'User email is required'
-        }, status=status.HTTP_400_BAD_REQUEST)
-
-    try:
-        user = User.objects.get(email=user_email)
-    except User.DoesNotExist:
-        return Response({
-            'success': False,
-            'error': 'User not found'
-        }, status=status.HTTP_404_NOT_FOUND)
+    user = request.user
 
     # Get profile
     profile = None
@@ -656,6 +906,10 @@ def verify_bank_account(request):
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def whatsapp_webhook_verification(request):
+    """
+    DEPRECATED: WhatsApp webhook verification is no longer supported.
+    """
+    return Response({'status': 'deprecated'}, status=status.HTTP_410_GONE)
     """
     Handle WhatsApp webhook for verification messages
     POST /api/user/verification/whatsapp-webhook/
@@ -877,3 +1131,49 @@ def get_supported_banks(request):
             'banks': banks,
             'note': 'Using fallback bank list due to API unavailability'
         })
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def resend_whatsapp_verification_code(request):
+    """
+    Resend WhatsApp verification code for pending user signup.
+    POST /api/auth/resend-verification-code/
+    Body: { "phone": "+2348012345678" }
+    """
+    phone = request.data.get('phone')
+    if not phone:
+        return Response({'error': 'Phone is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Normalize phone for matching (remove +, spaces, dashes)
+    def normalize_phone(p):
+        return re.sub(r'[^0-9]', '', str(p or ''))
+    
+    normalized_phone = normalize_phone(phone)
+    
+    # Find pending user with normalized phone matching
+    pending_qs = PendingUser.objects.filter(is_verified=False).order_by('-created_at')
+    pending = None
+    for pu in pending_qs:
+        if normalize_phone(pu.phone) == normalized_phone:
+            pending = pu
+            break
+    
+    if not pending:
+        return Response({'error': 'No pending signup found for this phone'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Generate a new 6-digit code and set expiry
+    new_code = str(random.randint(100000, 999999))
+    pending.verification_code = new_code
+    pending.code_generated_at = timezone.now()
+    pending.expires_at = timezone.now() + timedelta(minutes=10)
+    pending.save()
+
+    # TODO: send WhatsApp/SMS/email notification with the new code here
+    # For now, we return the code in the response (should be removed in production for security)
+
+    return Response({
+        'success': True, 
+        'message': 'New verification code generated. Please check your WhatsApp.',
+        'expires_at': pending.expires_at.isoformat()
+    })

@@ -1,127 +1,144 @@
 from django.shortcuts import render, redirect
-from django.http import JsonResponse, HttpResponse
-from django.conf import settings
-from django.contrib.auth.decorators import login_required
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
-from rest_framework import status
-from .models import User
+from django.contrib import messages
+from django.utils import timezone
+from django.contrib.auth.hashers import make_password
+from django.http import JsonResponse
+from .models import User, VendorProfile, CourierProfile
+from .forms import VendorSignupForm, CourierSignupForm
+import secrets
 
 def social_login_test(request):
-    """View to test social login functionality"""
+    """Test view for social login"""
     return render(request, 'social_login.html')
 
-def test_cloudinary(request):
-    """Test view to verify Cloudinary configuration"""
-    config = {
-        'is_configured': all([
-            hasattr(settings, 'CLOUDINARY_CLOUD_NAME'),
-            hasattr(settings, 'CLOUDINARY_API_KEY'),
-            hasattr(settings, 'CLOUDINARY_API_SECRET')
-        ]),
-        'cloud_name': getattr(settings, 'CLOUDINARY_CLOUD_NAME', 'Not configured'),
-        'storage_backend': settings.DEFAULT_FILE_STORAGE,
-        'media_url': settings.MEDIA_URL,
-        'media_root': str(settings.MEDIA_ROOT)
-    }
-    return JsonResponse(config)
-
-def test_menu_image_upload(request):
-    """Test endpoint to verify menu image upload functionality."""
-    from django.conf import settings
-    from ..utils.cloudinary_menu_utils import get_menu_image_transformations
-    
+def multi_role_signup(request):
+    """Handle multi-role signup form"""
     if request.method == 'POST':
-        # Test image upload
-        if 'image' in request.FILES:
-            try:
-                from ..utils.cloudinary_menu_utils import upload_menu_image
-                file = request.FILES['image']
-                response = upload_menu_image(file, vendor_id=1, folder='test_menu')
-                return JsonResponse({
-                    'success': True,
-                    'upload_response': response,
-                    'image_url': response.get('secure_url'),
-                    'public_id': response.get('public_id')
-                })
-            except Exception as e:
-                return JsonResponse({
-                    'success': False,
-                    'error': str(e)
-                })
-        else:
+        # Get the roles from the form
+        roles = request.POST.getlist('roles[]', [])
+
+        if not roles:
             return JsonResponse({
                 'success': False,
-                'error': 'No image file provided'
+                'error': 'At least one role must be selected.'
+            }, status=400)
+
+        # Validate required fields based on roles
+        email = request.POST.get('email')
+        password = request.POST.get('password')
+        first_name = request.POST.get('first_name')
+        last_name = request.POST.get('last_name')
+        phone = request.POST.get('phone')
+
+        if not all([email, password, first_name, last_name, phone]):
+            return JsonResponse({
+                'success': False,
+                'error': 'All basic fields are required.'
+            }, status=400)
+
+        # Check if email already exists
+        if User.objects.filter(email=email).exists():
+            return JsonResponse({
+                'success': False,
+                'error': 'An account with this email already exists.'
+            }, status=400)
+
+        # Check if phone already exists
+        if (User.objects.filter(phone=phone).exists() or
+            VendorProfile.objects.filter(phone=phone).exists() or
+            CourierProfile.objects.filter(phone=phone).exists()):
+            return JsonResponse({
+                'success': False,
+                'error': 'This phone number is already registered.'
+            }, status=400)
+
+        # Validate role-specific fields
+        profile_data = {}
+
+        if 'vendor' in roles:
+            business_name = request.POST.get('business_name')
+            business_category = request.POST.get('business_category')
+            business_address = request.POST.get('business_address')
+
+            if not all([business_name, business_category, business_address]):
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Business name, category, and address are required for vendor registration.'
+                }, status=400)
+
+            profile_data.update({
+                'business_name': business_name,
+                'business_category': business_category,
+                'business_address': business_address,
+                'business_description': request.POST.get('business_description', ''),
             })
-    else:
-        # Return available transformations
+
+        if 'courier' in roles:
+            vehicle_type = request.POST.get('vehicle_type')
+            if not vehicle_type:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Vehicle type is required for courier registration.'
+                }, status=400)
+
+            profile_data.update({
+                'service_areas': request.POST.get('service_areas', ''),
+                'vehicle_type': vehicle_type,
+                'has_bike': request.POST.get('has_bike', 'false').lower() == 'true',
+            })
+
+        # Create pending user
+        pending_user = PendingUser.objects.create(
+            email=email,
+            password=password,  # Will be hashed when creating actual user
+            first_name=first_name,
+            last_name=last_name,
+            phone=phone,
+            user_type=roles[0],  # Primary role
+            verification_code=str(secrets.randbelow(900000) + 100000),
+            profile_data=profile_data
+        )
+
+        # Return JSON response with verification details
         return JsonResponse({
-            'cloudinary_configured': hasattr(settings, 'DEFAULT_FILE_STORAGE') and 'cloudinary' in settings.DEFAULT_FILE_STORAGE,
-            'available_transformations': get_menu_image_transformations(),
-            'usage': 'POST an image file to test upload functionality'
+            'success': True,
+            'pending_user_id': pending_user.pk,
+            'verification_code': pending_user.verification_code,
+            'phone': pending_user.phone,
+            'roles': roles,
+            'message': f'Send "VERIFY {pending_user.verification_code}" to WhatsApp number {pending_user.phone}'
         })
 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def test_auth(request):
-    """Test endpoint to verify authentication is working"""
-    user = request.user
-    return Response({
-        'message': 'Authentication successful!',
-        'user': {
-            'id': user.id,
-            'email': user.email,
-            'first_name': user.first_name,
-            'last_name': user.last_name,
-            'is_staff': user.is_staff,
-            'is_superuser': user.is_superuser,
-            'is_social_signup': getattr(user, 'is_social_signup', False),
-            'social_provider': getattr(user, 'social_provider', None)
-        }
-    })
+    return JsonResponse({
+        'success': False,
+        'error': 'Method not allowed.'
+    }, status=405)
 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def test_vendor_auth(request):
-    """Test endpoint specifically for vendor authentication"""
-    user = request.user
-    
-    if not hasattr(user, 'vendor_profile'):
-        return Response({
-            'authenticated': True,
-            'is_vendor': False,
-            'error': 'User does not have a vendor profile',
-            'user': {
-                'id': user.id,
-                'email': user.email,
-                'role': user.role
-            }
-        }, status=403)
-    
-    vendor = user.vendor_profile
-    return Response({
-        'authenticated': True,
-        'is_vendor': True,
-        'user': {
-            'id': user.id,
-            'email': user.email,
-            'role': user.role
-        },
-        'vendor': {
-            'id': vendor.id,
-            'business_name': vendor.business_name,
-            'verification_status': vendor.verification_status
-        }
-    })
+def whatsapp_verification(request, pending_id):
+    """Handle WhatsApp verification - return JSON response"""
+    try:
+        pending_user = PendingUser.objects.get(id=pending_id)
 
-@api_view(['GET'])
-def google_login_test(request):
-    """Test endpoint to verify Google OAuth is configured"""
-    return Response({
-        'google_oauth_configured': bool(settings.SOCIAL_AUTH_GOOGLE_OAUTH2_KEY),
-        'client_id': settings.SOCIAL_AUTH_GOOGLE_OAUTH2_KEY,
-        'auth_url': '/api/auth/social/google/login/',
-        'signup_url': '/api/auth/social/google/signup/'
-    })
+        if pending_user.is_expired:
+            pending_user.delete()
+            return JsonResponse({
+                'success': False,
+                'error': 'Verification session expired. Please start signup again.'
+            }, status=400)
+
+        return JsonResponse({
+            'success': True,
+            'verification_code': pending_user.verification_code,
+            'phone': pending_user.phone,
+            'whatsapp_number': '15551482837',  # Your business number
+            'pending_id': pending_id,
+            'expires_at': pending_user.expires_at.isoformat(),
+            'user_type': pending_user.user_type,
+            'message': f'Send "VERIFY {pending_user.verification_code}" to WhatsApp number {pending_user.phone}'
+        })
+
+    except PendingUser.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Verification session not found.'
+        }, status=404)

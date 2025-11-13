@@ -24,6 +24,7 @@ class WhatsAppConversation(models.Model):
     onboarding_state = models.CharField(max_length=32, null=True, blank=True, help_text="Current onboarding state (FSM)")
     pending_email = models.CharField(max_length=128, null=True, blank=True, help_text="Pending user email during onboarding")
     pending_link_action = models.CharField(max_length=64, null=True, blank=True, help_text="Type of pending account link (e.g. email)")
+    pending_verification_action = models.CharField(max_length=64, null=True, blank=True, help_text="Pending verification action (e.g. expired_code)")
     
     class Meta:
         db_table = 'whatsapp_conversations'

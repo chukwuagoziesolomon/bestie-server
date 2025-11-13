@@ -13,6 +13,7 @@ from datetime import timedelta
 import json
 import logging
 import os
+import requests
 
 from .models import (
     WhatsAppConversation, 
@@ -41,12 +42,9 @@ logger = logging.getLogger(__name__)
 def _get_food_restaurants_text(food_type):
     """Get text description of restaurants that serve a specific food type - BACKEND DATA ONLY"""
     try:
-        # Try to call the vendor search API for restaurants serving this food type
-        import requests
-
         # Call the vendor search API
         base_url = getattr(settings, 'BASE_URL', 'http://127.0.0.1:8000')
-        api_url = f"{base_url}/api/user/search/vendors/"
+        api_url = f"{base_url}/api/user/vendors/search/"
 
         response = requests.get(api_url, params={
             'cuisine': food_type,
@@ -293,7 +291,39 @@ def _process_meta_message(message, value):
 
         # Link user if unknown but matches by phone (robustify)
         if not conversation.user:
-            user = User.objects.filter(phone__icontains=from_number.replace('+','').replace('-','').replace(' ','')).first()
+            # Try to find user by phone number in different profile models
+            user = None
+            clean_phone = from_number.replace('+','').replace('-','').replace(' ','')
+
+            # Check UserProfile first
+            try:
+                from bestyy.core_features.user.models import UserProfile
+                profile = UserProfile.objects.filter(phone__icontains=clean_phone).first()
+                if profile:
+                    user = profile.user
+            except:
+                pass
+
+            # Check VendorProfile
+            if not user:
+                try:
+                    from bestyy.core_features.user.models import VendorProfile
+                    profile = VendorProfile.objects.filter(phone__icontains=clean_phone).first()
+                    if profile:
+                        user = profile.user
+                except:
+                    pass
+
+            # Check CourierProfile
+            if not user:
+                try:
+                    from bestyy.core_features.user.models import CourierProfile
+                    profile = CourierProfile.objects.filter(phone__icontains=clean_phone).first()
+                    if profile:
+                        user = profile.user
+                except:
+                    pass
+
             if user:
                 conversation.user = user
             conversation.save()
@@ -306,15 +336,184 @@ def _process_meta_message(message, value):
         meta_service = MetaWhatsAppService()
         polite_wait = "Thank you for your patience. "
 
-        # --- VENDOR/COURIER branch: never chat-onboard, always reply politely with web signup url ---
-        if (user_role in ['vendor','courier']) or (content.lower() in ['signup vendor','signup courier']):
-            reply = (
-                f"Hello! For vendors and couriers, we require proper verification. "
-                f"Kindly complete your sign-up at our website: {WEB_SIGNUP_URL}\n"
-                "Once verified, you'll receive updates & codes directly here."
-            )
-            meta_service.send_message(to=from_number, message=reply)
-            return
+        # --- AUTO-VERIFICATION LOGIC (run FIRST - most user-friendly) ---
+        # Check if incoming WhatsApp number matches a pending user for auto-verification
+        try:
+            from bestyy.core_features.user.models import PendingUser
+            from bestyy.core_features.user.api.verification_views import _process_whatsapp_signup_core
+            import re
+            
+            def normalize_phone(p):
+                return re.sub(r'[^0-9]', '', str(p or ''))  # remove any non-digit
+            
+            incoming_normal = normalize_phone(from_number)
+            # Try to auto-verify if any active pending user matches this phone
+            pending_qs = PendingUser.objects.filter(is_verified=False, expires_at__gt=timezone.now()).order_by('-created_at')
+            for pending_user in pending_qs:
+                pending_phone_normal = normalize_phone(pending_user.phone)
+                if pending_phone_normal == incoming_normal:
+                    # Phone matches! Auto-verify using the pending user's code
+                    ok, payload, http_status = _process_whatsapp_signup_core(from_number, pending_user.verification_code)
+                    if ok:
+                        first_name = payload.get('first_name', '')
+                        primary_role = payload.get('role', 'user')
+                        if primary_role == 'vendor':
+                            reply_success = f"""✅ Welcome {first_name}!
+You are now verified as a vendor. You can start managing your store.
+"""
+                        elif primary_role == 'courier':
+                            reply_success = f"""✅ Welcome {first_name}!
+You are now verified as a courier. You can start delivering orders.
+"""
+                        else:
+                            reply_success = f"""✅ Welcome {first_name}!
+Your account is now verified. Enjoy the service!
+"""
+                        meta_service.send_message(to=from_number, message=reply_success)
+                        return
+                    else:
+                        # Verification failed for some reason, continue to normal flow
+                        logger.warning(f"Auto-verification failed for {from_number}: {payload.get('error', 'Unknown error')}")
+                        break
+        except Exception as e:
+            logger.error(f"Error in auto-verification logic: {str(e)}")
+            # Continue to normal flow if auto-verification fails
+
+        # --- Handle explicit verification code entry (fallback if auto-verification didn't work) ---
+        content_lower = content.lower().strip()
+        if content_lower.startswith('verify ') and len(content.split()) == 2:
+            code_part = content.split()[1]
+            if code_part.isdigit() and len(code_part) == 6:
+                # Call HTTP verification endpoint (single source of truth)
+                try:
+                    base_url = (
+                        getattr(settings, 'SELF_BASE_URL', '') or
+                        getattr(settings, 'PUBLIC_BASE_URL', '') or
+                        getattr(settings, 'API_BASE_URL', '')
+                    ).rstrip('/')
+                    if not base_url:
+                        hosts = getattr(settings, 'ALLOWED_HOSTS', [])
+                        base_url = f"http://{hosts[0]}" if hosts else 'http://127.0.0.1:8000'
+                    endpoint = f"{base_url}/api/auth/verify-whatsapp-signup/"
+                    logger.info(f"[VERIFICATION] Calling endpoint: {endpoint} for {from_number} code={code_part}")
+                    resp = requests.post(endpoint, json={
+                        'phone': from_number,
+                        'code': code_part
+                    }, timeout=5)
+                    status_code = resp.status_code
+                    data = {}
+                    try:
+                        data = resp.json()
+                    except Exception:
+                        pass
+                    logger.info(f"[VERIFICATION] Response status: {status_code} body={data}")
+                except requests.Timeout:
+                    reply = "⏳ Verification service timed out. Please try again in a moment."
+                    meta_service.send_message(to=from_number, message=reply)
+                    return
+                except Exception as e:
+                    logger.error(f"[VERIFICATION] HTTP error: {str(e)}")
+                    reply = "❌ Temporary error verifying your code. Please try again shortly."
+                    meta_service.send_message(to=from_number, message=reply)
+                    return
+
+                # Handle 400 errors (invalid code, expired, etc.)
+                if status_code == 400:
+                    error_msg = data.get('error', 'Invalid verification code')
+                    if 'expired' in error_msg.lower():
+                        reply = "❌ Your verification code has expired.\n\nIf you see this message, simply reply here on WhatsApp with anything and we will automatically verify you if your number matches our records.\nOtherwise, please visit the website and click 'Resend code'."
+                    elif 'invalid' in error_msg.lower() or 'not found' in error_msg.lower():
+                        reply = f"❌ {error_msg}\n\nIf you see this message, simply reply here on WhatsApp with anything and we will automatically verify you if your number matches our records.\nOtherwise, please visit the website and click 'Resend code'."
+                    else:
+                        reply = f"❌ {error_msg}\n\nPlease check your code and try again, or visit the website to request a new code."
+                    meta_service.send_message(to=from_number, message=reply)
+                    return
+
+                if status_code == 200 and data.get('ok') is True:
+                    first_name = data.get('first_name', '')
+                    primary_role = data.get('role', 'user')
+
+                    if primary_role == 'vendor':
+                        reply = f"""✅ Welcome {first_name}!
+
+Your vendor account has been created successfully!
+
+📱 What you can do with WhatsApp:
+• Accept and manage orders
+• Send delivery updates to customers
+• Receive customer inquiries
+• Get order notifications
+
+🌐 Next Steps:
+1. Visit your dashboard: bestyy.com/vendor/dashboard
+2. Upload your menu items
+3. Set your business hours
+4. Configure delivery settings
+
+💡 Pro Tips:
+• Keep your menu updated
+• Respond quickly to customer messages
+• Set competitive prices
+
+Reply with HELP anytime for assistance or MENU to see available commands.
+
+Best regards,
+Bestyy Team"""
+                    elif primary_role == 'courier':
+                        reply = f"""✅ Welcome {first_name}!
+
+Your courier account has been created successfully!
+
+📱 What you can do with WhatsApp:
+• Receive delivery assignments
+• Update order status
+• Communicate with vendors
+• Get delivery notifications
+
+🌐 Next Steps:
+1. Visit your dashboard: bestyy.com/courier/dashboard
+2. Set your availability
+3. Update your location
+4. Configure delivery preferences
+
+💡 Pro Tips:
+• Keep your location updated
+• Respond quickly to assignments
+• Maintain good ratings
+
+Reply with HELP anytime for assistance or DELIVERIES to see available commands.
+
+Best regards,
+Bestyy Team"""
+                    else:
+                        reply = f"""✅ Welcome {first_name}!
+
+Your Bestyy account has been created successfully!
+
+You can now place orders and enjoy delicious food delivery.
+
+🌐 Visit your dashboard: bestyy.com/dashboard
+
+Best regards,
+Bestyy Team"""
+                elif status_code == 410:
+                        reply = (
+                            "❌ Your verification code has expired.\n\n"
+                            "Reply with: 1 to generate a new code, or NO to skip."
+                        )
+                        conversation.pending_verification_action = 'expired_code'
+                        conversation.save()
+                elif status_code == 400:
+                    reply = data.get('error') or "❌ Invalid verification code. Please check the code and try again."
+                else:
+                    reply = "❌ Error processing verification. Please try again."
+
+                meta_service.send_message(to=from_number, message=reply)
+                return
+
+        # --- REMOVED: VENDOR/COURIER blocking logic ---
+        # All users (vendors, couriers, customers) now have equal access to chatbot, onboarding, and food ordering
+        # User lookups by phone persist for all roles - each phone session maps to one User regardless of their roles/multi-role
 
         # --- VENDOR/COURIER receiving order/code - skip conversational flow, allow normal code delivery ---
         if user_role in ['vendor','courier'] and content.startswith('[CODE]'):
@@ -326,7 +525,7 @@ def _process_meta_message(message, value):
             if user_role == 'vendor' and content.strip().isdigit() and len(content.strip()) == 6:
                 code = content.strip()
                 # Check if this vendor has any orders with this pickup code
-                from bestyy.core_features.user.models import Order
+                from bestyy.restaurant_features.order.models import Order
                 try:
                     order = Order.objects.filter(
                         vendor__user=user_obj,
@@ -365,7 +564,7 @@ def _process_meta_message(message, value):
             elif user_role == 'courier' and content.strip().isdigit() and len(content.strip()) == 6:
                 otp = content.strip()
                 # Check if this courier has any orders with this delivery OTP
-                from bestyy.core_features.user.models import Order
+                from bestyy.restaurant_features.order.models import Order
                 try:
                     order = Order.objects.filter(
                         courier__user=user_obj,
@@ -425,48 +624,314 @@ def _process_meta_message(message, value):
                 meta_service.send_message(to=from_number, message=reply)
                 return
 
-        # --- SIGNUP VERIFICATION - Check for signup verification codes ---
+        # --- SIGNUP VERIFICATION - Check for VERIFY command with code ---
         # This handles verification codes sent during signup process
-        if content.strip().isdigit() and len(content.strip()) == 6:
-            code = content.strip()
-            # Check if this matches any pending user verification codes
-            from bestyy.core_features.user.models import PendingUser
-            try:
-                pending_user = PendingUser.objects.get(
-                    verification_code=code,
-                    phone=from_number,
-                    is_verified=False
-                )
+        content_lower = content.lower().strip()
+        if content_lower.startswith('verify ') and len(content.split()) == 2:
+            code_part = content.split()[1]
+            if code_part.isdigit() and len(code_part) == 6:
+                # First, check if this number has a pending signup
+                try:
+                    from bestyy.core_features.user.models import PendingUser
+                    clean_phone = from_number.replace('+', '').replace('-', '').replace(' ', '')
+                    pending = (PendingUser.objects
+                              .filter(phone__icontains=clean_phone, is_verified=False)
+                              .order_by('-created_at').first())
+                except Exception as e:
+                    logger.error(f"Lookup pending user failed: {str(e)}")
+                    pending = None
 
-                if not pending_user.is_expired:
-                    # Verify the user and create account
-                    user, message = pending_user.create_user_account()
+                if not pending:
+                    reply = (
+                        "❌ Invalid verification code.\n\n"
+                        "We couldn't find a pending signup for this number. "
+                        "Please start the signup again from the website/app."
+                    )
+                    meta_service.send_message(to=from_number, message=reply)
+                    return
 
-                    if user:
-                        reply = f"""✅ Welcome {user.first_name}!
+                if pending.is_expired:
+                    reply = (
+                        "❌ Your verification code has expired.\n\n"
+                        "Reply with: 1 to generate a new code, or NO to skip."
+                    )
+                    conversation.pending_verification_action = 'expired_code'
+                    conversation.save()
+                    meta_service.send_message(to=from_number, message=reply)
+                    return
 
-Your {pending_user.user_type} account has been created successfully!
+                if code_part != getattr(pending, 'verification_code', ''):
+                    reply = "❌ Invalid verification code. Please check the code and try again."
+                    meta_service.send_message(to=from_number, message=reply)
+                    return
 
-You can now log in to your dashboard and start using Bestyy.
+                # Use shared verification core (safe path)
+                try:
+                    from bestyy.core_features.user.api.verification_views import _process_whatsapp_signup_core
+                    ok, payload, _http_status = _process_whatsapp_signup_core(from_number, code_part)
+                except Exception as e:
+                    logger.error(f"Verification core error: {str(e)}")
+                    ok, payload = False, {'error': 'Error processing verification'}
+
+                if ok:
+                    first_name = payload.get('first_name', '')
+                    primary_role = payload.get('role', 'user')
+
+                    if primary_role == 'vendor':
+                        reply = f"""✅ Welcome {first_name}!
+
+Your vendor account has been created successfully!
+
+📱 What you can do with WhatsApp:
+• Accept and manage orders
+• Send delivery updates to customers
+• Receive customer inquiries
+• Get order notifications
+
+🌐 Next Steps:
+1. Visit your dashboard: bestyy.com/vendor/dashboard
+2. Upload your menu items
+3. Set your business hours
+4. Configure delivery settings
+
+💡 Pro Tips:
+• Keep your menu updated
+• Respond quickly to customer messages
+• Set competitive prices
+
+Reply with HELP anytime for assistance or MENU to see available commands.
+
+Best regards,
+Bestyy Team"""
+                    elif primary_role == 'courier':
+                        reply = f"""✅ Welcome {first_name}!
+
+Your courier account has been created successfully!
+
+📱 What you can do with WhatsApp:
+• Receive delivery assignments
+• Update order status
+• Communicate with vendors
+• Get delivery notifications
+
+🌐 Next Steps:
+1. Visit your dashboard: bestyy.com/courier/dashboard
+2. Set your availability
+3. Update your location
+4. Configure delivery preferences
+
+💡 Pro Tips:
+• Keep your location updated
+• Respond quickly to assignments
+• Maintain good ratings
+
+Reply with HELP anytime for assistance or DELIVERIES to see available commands.
 
 Best regards,
 Bestyy Team"""
                     else:
-                        reply = "❌ Account creation failed. Please contact support."
+                        reply = f"""✅ Welcome {first_name}!
+
+Your Bestyy account has been created successfully!
+
+You can now place orders and enjoy delicious food delivery.
+
+🌐 Visit your dashboard: bestyy.com/dashboard
+
+Best regards,
+Bestyy Team"""
                 else:
-                    reply = "❌ Verification code expired. Please start signup again."
+                    # Decide if the error was due to expired code
+                    error_msg = payload.get('error', 'Invalid verification code')
+                    if 'expired' in error_msg.lower():
+                        reply = (
+                            "❌ Your verification code has expired.\n\n"
+                            "Reply with: 1 to generate a new code, or NO to skip."
+                        )
+                        conversation.pending_verification_action = 'expired_code'
+                        conversation.save()
+                    else:
+                        reply = "❌ Invalid verification code. Please check the code and try again."
+                if reply:
+                    meta_service.send_message(to=from_number, message=reply)
+                    return
+            else:
+                reply = "Invalid format. Please send: VERIFY 123456"
+                meta_service.send_message(to=from_number, message=reply)
+                return
+
+        # --- Handle expired code follow-up responses ---
+        if conversation.pending_verification_action == 'expired_code':
+            if content.lower().strip() in ['yes', 'y', 'generate', 'new code']:
+                # Generate new verification code for existing pending user
+                try:
+                    # Find the most recent pending user for this phone
+                    pending_user = PendingUser.objects.filter(
+                        phone=from_number,
+                        is_verified=False
+                    ).order_by('-created_at').first()
+
+                    if pending_user:
+                        # Generate new code
+                        import secrets
+                        new_code = str(secrets.randbelow(900000) + 100000)
+                        pending_user.verification_code = new_code
+                        pending_user.created_at = timezone.now()  # Reset expiration
+                        pending_user.save()
+
+                        reply = f"""✅ New verification code generated!
+
+Send the following message to verify your account:
+
+VERIFY {new_code}
+
+This code will expire in 24 hours."""
+                    else:
+                        reply = "❌ No pending verification found. Please start the signup process again."
+
+                except Exception as e:
+                    logger.error(f"Error generating new verification code: {str(e)}")
+                    reply = "❌ Error generating new code. Please try again later."
+
+                # Clear the pending action
+                conversation.pending_verification_action = None
+                conversation.save()
 
                 meta_service.send_message(to=from_number, message=reply)
                 return
 
-            except PendingUser.DoesNotExist:
-                # Not a signup verification code, continue with normal flow
-                pass
+            elif content.lower().strip() in ['no', 'n', 'skip', 'cancel']:
+                # User chose to skip verification
+                reply = """Okay, I've skipped the verification for now.
+
+You can still use basic features, but some advanced features may require verification.
+
+If you change your mind, you can always verify later by starting the signup process again.
+
+How can I help you today?"""
+
+                # Clear the pending action
+                conversation.pending_verification_action = None
+                conversation.save()
+
+                meta_service.send_message(to=from_number, message=reply)
+                return
+
+        # WhatsApp code resend logic
+        if content.strip().lower() == 'resend':
+            resend_endpoint = (
+                getattr(settings, 'SELF_BASE_URL', '') or
+                getattr(settings, 'PUBLIC_BASE_URL', '') or
+                getattr(settings, 'API_BASE_URL', '') or
+                'http://127.0.0.1:8000'
+            ).rstrip('/') + '/api/auth/resend-verification-code/'
+            try:
+                resp = requests.post(resend_endpoint, json={'phone': from_number}, timeout=5)
+                if resp.status_code == 200 and resp.json().get('success'):
+                    meta_service.send_message(
+                        to=from_number,
+                        message="A new verification code has been sent to your WhatsApp. Please check and enter it!"
+                    )
+                else:
+                    msg = resp.json().get('error', 'We could not resend the code. Please return to the website for assistance.')
+                    meta_service.send_message(to=from_number, message=msg)
             except Exception as e:
-                logger.error(f"Error processing signup verification: {str(e)}")
-                reply = "❌ Error processing verification. Please try again."
-                meta_service.send_message(to=from_number, message=reply)
+                logger.error(f"Failed to resend WhatsApp code: {str(e)}")
+                meta_service.send_message(to=from_number, message="Temporary error sending new code. Please try again or go to the website and click 'Resend code'.")
+            return
+
+        # --- Prevent duplicate WhatsApp inbound messages (idempotency fix) ---
+        from .models import WhatsAppMessage
+        whatsapp_message, created = WhatsAppMessage.objects.get_or_create(
+            conversation=conversation,
+            message_id=message_id,
+            defaults={
+                'message_type': 'text',
+                'content': content,
+                'direction': 'inbound',
+                'timestamp': timezone.now(),
+            }
+        )
+        if not created:
+            logger.warning(f"Duplicate message_id detected: {message_id}")
+            return  # Do not process again
+        # (intent logic continues below)
+
+        # --- SMART INTENT DETECTION (AI-based intent classifier for ALL messages) ---
+        from .ai_service import WhatsAppAIService, WhatsAppMessage
+        ai_service = WhatsAppAIService()
+        intent_result = ai_service.process_message(whatsapp_message, context={'user_exists': bool(conversation.user)})
+        category = intent_result.get('category', None)
+
+        # --- Handle verification intent (AI detected) ---
+        if category == 'verification':
+            import re
+            code_part = intent_result.get('code')
+            if code_part:
+                try:
+                    from bestyy.core_features.user.models import PendingUser
+                    clean_phone = from_number.replace('+', '').replace('-', '').replace(' ', '')
+                    pending = (PendingUser.objects
+                              .filter(phone__icontains=clean_phone, is_verified=False)
+                              .order_by('-created_at').first())
+                except Exception as e:
+                    logger.error(f"Lookup pending user failed: {str(e)}")
+                    pending = None
+
+                if not pending:
+                    reply = (
+                        "❌ Invalid verification code.\n\n"
+                        "If you see this message, simply reply here on WhatsApp with anything and we will automatically verify you if your number matches our records.\n"
+                        "Otherwise, please visit the website and click 'Resend code'."
+                    )
+                    meta_service.send_message(to=from_number, message=reply)
+                    return
+
+                if pending.is_expired:
+                    reply = (
+                        "❌ Your verification code has expired.\n\n"
+                        "If you see this message, simply reply here on WhatsApp with anything and we will automatically verify you if your number matches our records.\n"
+                        "Otherwise, please visit the website and click 'Resend code'."
+                    )
+                    conversation.pending_verification_action = 'expired_code'
+                    conversation.save()
+                    meta_service.send_message(to=from_number, message=reply)
+                    return
+
+                if code_part != getattr(pending, 'verification_code', ''):
+                    reply = "❌ Invalid verification code. Please check the code and try again."
+                    meta_service.send_message(to=from_number, message=reply)
+                    return
+
+                # Use shared verification core (safe path)
+                try:
+                    from bestyy.core_features.user.api.verification_views import _process_whatsapp_signup_core
+                    ok, payload, _http_status = _process_whatsapp_signup_core(from_number, code_part)
+                except Exception as e:
+                    logger.error(f"Verification core error: {str(e)}")
+                    ok, payload = False, {'error': 'Error processing verification'}
+
+                if ok:
+                    first_name = payload.get('first_name', '')
+                    primary_role = payload.get('role', 'user')
+                    if primary_role == 'vendor':
+                        reply = f"""✅ Welcome {first_name}!
+You are now verified as a vendor. You can start managing your store.
+"""
+                    elif primary_role == 'courier':
+                        reply = f"""✅ Welcome {first_name}!
+You are now verified as a courier. You can start delivering orders.
+"""
+                    else:
+                        reply = f"""✅ Welcome {first_name}!
+Your account is now verified. Enjoy the service!
+"""
+                    meta_service.send_message(to=from_number, message=reply)
+                else:
+                    reply = payload.get('error', 'Verification failed. Please try again.')
+                    meta_service.send_message(to=from_number, message=reply)
                 return
+        # --- continue with food ordering/general fallback ...
 
         # --- CUSTOMER CHATBOT CONVERSATIONAL FLOW (ONBOARDING FSM) ---
         state = conversation.onboarding_state
@@ -523,19 +988,35 @@ Bestyy Team"""
             if email_match:
                 email = content
                 existing = User.objects.filter(email=email).first()
-                if existing and (not existing.phone or from_number not in existing.phone):
-                    # Need confirmation to link WhatsApp to this email (different phone)
-                    conversation.pending_email = email
-                    conversation.onboarding_state = 'awaiting_link_confirmation'
-                    conversation.pending_link_action = 'email'
-                    conversation.save()
-                    reply = (
-                        f"Thank you! We noticed this email is already registered. "
-                        "If this is your account, reply YES to link this WhatsApp number to it. "
-                        "If not, kindly provide a different email address."
-                    )
-                    meta_service.send_message(to=from_number, message=reply)
-                    return
+                if existing:
+                    # Determine if this WhatsApp number is already linked to any of the user's profiles
+                    phone_linked = False
+                    try:
+                        from bestyy.core_features.user.models import UserProfile, VendorProfile, CourierProfile
+                        clean_phone = from_number.replace('+','').replace('-','').replace(' ','')
+                        # Check all possible profiles for the same user
+                        if hasattr(existing, 'profile') and existing.profile and existing.profile.phone and clean_phone in existing.profile.phone:
+                            phone_linked = True
+                        if not phone_linked and hasattr(existing, 'vendor_profile') and existing.vendor_profile and existing.vendor_profile.phone and clean_phone in existing.vendor_profile.phone:
+                            phone_linked = True
+                        if not phone_linked and hasattr(existing, 'courier_profile') and existing.courier_profile and existing.courier_profile.phone and clean_phone in existing.courier_profile.phone:
+                            phone_linked = True
+                    except Exception:
+                        phone_linked = False
+
+                    if not phone_linked:
+                        # Need confirmation to link WhatsApp to this email (different phone)
+                        conversation.pending_email = email
+                        conversation.onboarding_state = 'awaiting_link_confirmation'
+                        conversation.pending_link_action = 'email'
+                        conversation.save()
+                        reply = (
+                            f"Thank you! We noticed this email is already registered. "
+                            "If this is your account, reply YES to link this WhatsApp number to it. "
+                            "If not, kindly provide a different email address."
+                        )
+                        meta_service.send_message(to=from_number, message=reply)
+                        return
                 elif existing:
                     # Same email/phone: just welcome back
                     conversation.user = existing
@@ -547,70 +1028,105 @@ Bestyy Team"""
                     meta_service.send_message(to=from_number, message=reply)
                     return
                 else:
-                    # New user: proceed with account creation and notify
+                    # New user: call multi-role registration endpoint to create as 'user'
                     import secrets
-                    from bestyy.core_features.user.serializers.user_serializers import UserRegistrationSerializer
-                    from django.core.mail import send_mail
-                    from django.conf import settings
                     password = secrets.token_urlsafe(8)
-                    signup_data = {
-                        'email': email,
-                        'first_name': contact_name.split()[0] if contact_name else 'WhatsApp',
-                        'last_name': ' '.join(contact_name.split()[1:]) if contact_name and len(contact_name.split()) > 1 else 'User',
-                        'phone': from_number,
-                        'role': 'user',
-                        'password': password,
-                        'confirm_password': password,
-                    }
-                    serializer = UserRegistrationSerializer(data=signup_data)
-                    if serializer.is_valid():
-                        user = serializer.save()
-                        conversation.user = user
-                        conversation.onboarding_state = 'onboarded'
-                        conversation.save()
-                        # Send HTML welcome email using template
-                        base_url = getattr(settings, 'BASE_URL', 'https://bestyy.com')
-                        logo_url = f"{base_url}/static/logo.png"
-                        subject = "Welcome to Bestyy - Your Account Details"
-                        html_message = f"""
-                            <html><body style='font-family: Nunito Sans, Arial, sans-serif; background: #fafbfc; max-width: 640px; margin: auto;'>
-                                <div style='background: linear-gradient(90deg, #23C7B2 0%, #25AC9B 100%); padding: 24px 0; text-align: center; color: #fff;'>
-                                    <img src='{logo_url}' alt='Bestyy' style='max-width: 84px; border-radius: 10px;'><br>
-                                    <h1>Welcome to Bestyy!</h1>
-                                </div>
-                                <div style='background: #fff; border-radius: 12px; margin: 32px 0; padding: 32px;'>
-                                    <p style='font-size: 18px;'>Hello {signup_data['first_name']},</p>
-                                    <p>We're excited to have you! Here are your account details for Bestyy:</p>
-                                    <ul>
-                                        <li><strong>Email:</strong> {email}</li>
-                                        <li><strong>Temporary Password:</strong> {password}</li>
-                                    </ul>
-                                    <p>You can update your password anytime in your profile settings.</p>
-                                    <p>If you did not request this, please ignore this email. </p>
-                                    <div style='margin: 32px 0 0; color: #666;'>Thank you for joining Bestyy!<br>— The Bestyy Team</div>
-                                </div>
-                                <footer style='text-align: center; color: #999; font-size: 12px; margin-top: 24px;'>Bestyy &copy; 2025</footer>
-                            </body></html>
-                        """
-                        send_mail(
-                            subject=subject,
-                            message=f"Welcome! Your login is {email}. Your password: {password}.",
-                            html_message=html_message,
-                            from_email=getattr(settings,'DEFAULT_FROM_EMAIL', 'noreply@bestyy.com'),
-                            recipient_list=[email],
-                            fail_silently=False
+                    try:
+                        base_url = (
+                            getattr(settings, 'SELF_BASE_URL', '') or
+                            getattr(settings, 'PUBLIC_BASE_URL', '') or
+                            getattr(settings, 'API_BASE_URL', '') or
+                            getattr(settings, 'BASE_URL', '')
+                        ).rstrip('/') or 'http://127.0.0.1:8000'
+                        endpoint = f"{base_url}/api/user/register/multi-role/"
+                        payload = {
+                            'email': email,
+                            'first_name': (contact_name.split()[0] if contact_name else 'WhatsApp'),
+                            'last_name': (' '.join(contact_name.split()[1:]) if contact_name and len(contact_name.split()) > 1 else 'User'),
+                            'phone': from_number,
+                            'password': password,
+                            'confirm_password': password,
+                            'roles': ['user']
+                        }
+                        resp = requests.post(endpoint, json=payload, timeout=8)
+                        if resp.status_code in (200, 201):
+                            # Link conversation to the newly created/updated user
+                            try:
+                                from django.contrib.auth import get_user_model
+                                UserModel = get_user_model()
+                                user = UserModel.objects.filter(email=email).first()
+                                if user:
+                                    conversation.user = user
+                                    conversation.onboarding_state = 'onboarded'
+                                    conversation.save()
+                            except Exception:
+                                pass
+
+                            # Send credentials by email
+                            try:
+                                from django.core.mail import send_mail
+                                base_url_mail = getattr(settings, 'BASE_URL', 'https://bestyy.com')
+                                logo_url = f"{base_url_mail}/static/logo.png"
+                                subject = "Welcome to Bestyy - Your Account Details"
+                                html_message = f"""
+                                    <html><body style='font-family: Nunito Sans, Arial, sans-serif; background: #fafbfc; max-width: 640px; margin: auto;'>
+                                        <div style='background: linear-gradient(90deg, #23C7B2 0%, #25AC9B 100%); padding: 24px 0; text-align: center; color: #fff;'>
+                                            <img src='{logo_url}' alt='Bestyy' style='max-width: 84px; border-radius: 10px;'><br>
+                                            <h1>Welcome to Bestyy!</h1>
+                                        </div>
+                                        <div style='background: #fff; border-radius: 12px; margin: 32px 0; padding: 32px;'>
+                                            <p style='font-size: 18px;'>Hello {payload['first_name']},</p>
+                                            <p>We're excited to have you! Here are your account details for Bestyy:</p>
+                                            <ul>
+                                                <li><strong>Email:</strong> {email}</li>
+                                                <li><strong>Temporary Password:</strong> {password}</li>
+                                            </ul>
+                                            <p>You can update your password anytime in your profile settings.</p>
+                                            <p>If you did not request this, please ignore this email. </p>
+                                            <div style='margin: 32px 0 0; color: #666;'>Thank you for joining Bestyy!<br>— The Bestyy Team</div>
+                                        </div>
+                                        <footer style='text-align: center; color: #999; font-size: 12px; margin-top: 24px;'>Bestyy &copy; 2025</footer>
+                                    </body></html>
+                                """
+                                send_mail(
+                                    subject=subject,
+                                    message=f"Welcome! Your login is {email}. Your password: {password}.",
+                                    html_message=html_message,
+                                    from_email=getattr(settings,'DEFAULT_FROM_EMAIL', 'noreply@bestyy.com'),
+                                    recipient_list=[email],
+                                    fail_silently=True
+                                )
+                            except Exception as e:
+                                logger.warning(f"Failed to send welcome email: {str(e)}")
+
+                            # Warm, personalized welcome
+                            first_name = payload['first_name']
+                            meta_service.send_message(
+                                to=from_number,
+                                message=(
+                                    f"Welcome to Bestyy, {first_name}! 🎉 Your account is ready. "
+                                    "I've sent details to your email."
+                                )
+                            )
+                            # Continue with onboarding questions immediately
+                            onboarding_prompt = (
+                                "Hey — I'm Bestyy 👋, your food-finding AI! I'll help you discover, order and reorder meals quickly.\n\n"
+                                "Quick choices — reply with the number or type a word:\n"
+                                "1. Local\n2. Fast food\n3. Western\n4. Vegetarian / Healthy\n5. Desserts & Drinks\n\n"
+                                "Bestyy: I have a few quick questions so I serve you best, would you like to skip or am I allowed to ask?"
+                            )
+                            meta_service.send_message(to=from_number, message=onboarding_prompt)
+                        else:
+                            meta_service.send_message(
+                                to=from_number,
+                                message="Sorry, we couldn't create your account right now. Please try again in a moment."
+                            )
+                    except Exception as e:
+                        logger.error(f"Multi-role registration call failed: {str(e)}")
+                        meta_service.send_message(
+                            to=from_number,
+                            message="Sorry, we couldn't create your account right now. Please try again shortly."
                         )
-                        reply = (
-                            f"Thank you for providing your email! Your Bestyy account is now ready. "
-                            "We've sent your login details and password to your email. "
-                            "You can now place orders and enjoy Bestyy. Please check your inbox!"
-                        )
-                        meta_service.send_message(to=from_number, message=reply)
-                    else:
-                        reply = (
-                            f"Sorry, we couldn't create your account: {serializer.errors}. Please try again later or contact support."
-                        )
-                        meta_service.send_message(to=from_number, message=reply)
                     return
             else:
                 # Check if this is a greeting - if so, acknowledge and remind about email
@@ -633,13 +1149,35 @@ Bestyy Team"""
                 return
 
         if state == 'awaiting_link_confirmation':
-            if content.lower().strip() == 'yes':
+            import re
+            normalized = re.sub(r'[^a-z]', '', content.lower())
+            if normalized in ['yes', 'y']:
                 email = conversation.pending_email
                 existing = User.objects.filter(email=email).first()
                 if existing:
-                    # Link WhatsApp number to this account
-                    existing.phone = from_number
-                    existing.save()
+                    # Link WhatsApp number to this account via profiles
+                    try:
+                        from bestyy.core_features.user.models import UserProfile, VendorProfile, CourierProfile
+                        # Ensure user profile exists and set phone
+                        profile, _ = UserProfile.objects.get_or_create(user=existing)
+                        profile.phone = from_number
+                        profile.save()
+                        # If vendor/courier profiles exist, optionally set phone there too
+                        try:
+                            if hasattr(existing, 'vendor_profile'):
+                                existing.vendor_profile.phone = from_number
+                                existing.vendor_profile.save()
+                        except Exception:
+                            pass
+                        try:
+                            if hasattr(existing, 'courier_profile'):
+                                existing.courier_profile.phone = from_number
+                                existing.courier_profile.save()
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+
                     conversation.user = existing
                     conversation.onboarding_state = 'onboarded'
                     conversation.save()
@@ -673,7 +1211,7 @@ Bestyy Team"""
                         fail_silently=False
                     )
                     reply = (
-                        f"Wonderful! Your WhatsApp number is now linked to your Bestyy account. You’re all set. How may we assist you today?"
+                        f"✅ Linked! Your WhatsApp number is now connected to {email}. You're all set.\n\nWhat would you like to eat today?"
                     )
                     meta_service.send_message(to=from_number, message=reply)
                     return
@@ -701,24 +1239,37 @@ Bestyy Team"""
                     fallback_message = _get_food_restaurants_text(food_intent)
                     meta_service.send_message(to=from_number, message=fallback_message)
                     return
+            # Recommendation, budget, or "I'm hungry" assistance
+            lowered = content.lower()
+            recommendation_triggers = ['recommend', 'suggest', "i'm hungry", 'im hungry', 'hungry', 'where can i eat', 'what should i eat']
+            if any(trigger in lowered for trigger in recommendation_triggers) or 'budget' in lowered:
+                try:
+                    # Extract budget if present (e.g., ₦2000, 2000, 2k)
+                    import re
+                    budget = None
+                    m = re.search(r"(?:₦|ngn|n)?\s*([0-9]{3,6})(?:\s*naira|\s*ngn)?", lowered)
+                    if not m:
+                        m = re.search(r"([0-9]+)\s*k\b", lowered)  # e.g., 2k
+                        if m:
+                            budget = int(m.group(1)) * 1000
+                    elif m:
+                        budget = int(m.group(1))
+
+                    # Offer category-based quick picks
+                    categories_message = (
+                        (f"Got it! Budget noted: ₦{budget:,.0f}. " if budget else "Got it! ") +
+                        "Here are quick options. Reply with a number or tell me a dish:\n\n"
+                        "1. Local\n2. Fast food\n3. Western\n4. Vegetarian / Healthy\n5. Desserts & Drinks\n\n"
+                        "You can also say things like 'pizza under ₦3000' or 'cheap jollof'."
+                    )
+                    meta_service.send_message(to=from_number, message=categories_message)
+                    return
+                except Exception as e:
+                    logger.error(f"Recommendation assist failed: {str(e)}")
 
             # For non-food ordering messages, use normal AI service
             try:
                 ai_service = WhatsAppAIService()
-                whatsapp_message = WhatsAppMessage.objects.create(
-                    conversation=conversation,
-                    message_id=message_id,
-                    message_type='text',
-                    content=content,
-                    direction='inbound',
-                    timestamp=timezone.now()
-                )
-
-                # Ensure user is linked to conversation if not already
-                if not conversation.user and user_obj:
-                    conversation.user = user_obj
-                    conversation.save()
-
                 ai_response = ai_service.process_message(whatsapp_message, context={'user_exists': True})
                 if ai_response.get('success'):
                     meta_service.send_message(
@@ -869,16 +1420,45 @@ def _detect_food_ordering_intent(content):
     for food_type in food_types:
         if food_type in content_lower:
             return food_type
+
+    # Try Nigerian dishes knowledge base (e.g., abacha, egusi, efo riro, etc.)
+    try:
+        from .nigerian_dishes_kb import find_nigerian_dish
+        kb_match = find_nigerian_dish(content)
+        if kb_match:
+            return kb_match
+    except Exception:
+        pass
     
+    # Heuristic fallback: extract likely food phrase after intent verbs (works for foods not in lists)
+    try:
+        import re
+        # Common ordering phrases followed by the dish name
+        patterns = [
+            r"i\s*(?:want|would like|wanna|need)\s*(?:to\s*order|)\s*(.+)",
+            r"can\s*i\s*(?:get|have|order)\s*(.+)",
+            r"order\s*(.+)",
+            r"get\s*me\s*(.+)",
+        ]
+        for pat in patterns:
+            m = re.search(pat, content_lower)
+            if m:
+                candidate = m.group(1).strip()
+                # Trim trailing polite phrases
+                candidate = re.sub(r"\b(please|now|today|for me)\b", "", candidate).strip()
+                # Keep up to first 4 words to avoid overlong queries
+                words = candidate.split()
+                if words:
+                    return " ".join(words[:4])
+    except Exception:
+        pass
+
     return None
 
 
 def _get_food_recommendations_with_api(food_type, user=None):
     """Get food recommendations by calling the actual API endpoints with time-based suggestions - ONLY show real backend data"""
     try:
-        import requests
-        from django.utils import timezone
-        
         # Get base URL from settings
         base_url = getattr(settings, 'BASE_URL', 'http://127.0.0.1:8000')
         
@@ -887,7 +1467,7 @@ def _get_food_recommendations_with_api(food_type, user=None):
         
         # Try unified recommendations API first
         try:
-            api_url = f"{base_url}/api/user/recommendations/"
+            api_url = f"{base_url}/api/user/vendors/recommendations/"
             params = {
                 'cuisine': food_type,
                 'page_size': 4
@@ -914,7 +1494,7 @@ def _get_food_recommendations_with_api(food_type, user=None):
         
         # Fallback to vendor search API
         try:
-            api_url = f"{base_url}/api/user/search/vendors/"
+            api_url = f"{base_url}/api/user/vendors/search/"
             params = {
                 'cuisine': food_type,
                 'page_size': 4
@@ -1043,13 +1623,11 @@ def _get_time_based_no_food_message(food_type, current_hour):
 def _get_available_food_types():
     """Get available food types from the backend"""
     try:
-        import requests
-        
         base_url = getattr(settings, 'BASE_URL', 'http://127.0.0.1:8000')
         
         # Try to get available cuisines from the search API
         try:
-            api_url = f"{base_url}/api/user/search/vendors/"
+            api_url = f"{base_url}/api/user/vendors/search/"
             response = requests.get(api_url, params={'page_size': 10}, timeout=5)
             
             if response.status_code == 200:

@@ -35,7 +35,9 @@ def start_development():
     print(f"   - Search API: docs/VENDOR_SEARCH_API.md")
     
     print(f"\n🎯 To start the server, run:")
-    print(f"   python manage.py runserver")
+    print(f"   python manage.py runsslserver 0.0.0.0:8000")  # HTTPS for development
+    print(f"   OR")
+    print(f"   python manage.py runserver 0.0.0.0:8000")  # HTTP fallback
     print(f"   OR")
     print(f"   daphne -b 0.0.0.0 -p 8000 bestyy.asgi:application")
     

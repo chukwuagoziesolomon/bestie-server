@@ -26,10 +26,12 @@ class Product(models.Model):
     description = models.TextField()
     price = models.DecimalField(max_digits=10, decimal_places=2)
     vendor = models.ForeignKey(
-        'vendor.Vendor',
+        'user.VendorProfile',
         on_delete=models.CASCADE,
         related_name='products'
     )
+    image = models.URLField(null=True, blank=True, help_text="Cloudinary image URL")
+    video = models.URLField(null=True, blank=True, help_text="Cloudinary video URL")
     category = models.ForeignKey(
         Category,
         on_delete=models.SET_NULL,

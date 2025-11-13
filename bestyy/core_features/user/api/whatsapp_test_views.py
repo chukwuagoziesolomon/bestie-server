@@ -7,7 +7,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 from django.shortcuts import get_object_or_404
 
-from bestyy.core_features.user.models import VendorProfile, Order
+from bestyy.core_features.user.models import VendorProfile
+from bestyy.restaurant_features.order.models import Order
 from bestyy.core_features.user.services.whatsapp_vendor_service import WhatsAppVendorNotificationService
 
 

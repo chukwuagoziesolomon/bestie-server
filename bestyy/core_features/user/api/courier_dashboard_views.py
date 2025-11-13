@@ -9,7 +9,8 @@ from decimal import Decimal
 import numpy as np
 from scipy import stats
 
-from bestyy.core_features.user.models import CourierProfile, Order
+from bestyy.core_features.user.models import CourierProfile
+from bestyy.restaurant_features.order.models import Order
 from .serializers import DeliverySerializer
 
 def calculate_trend_line(x_data, y_data):
@@ -89,7 +90,7 @@ def dashboard_analytics(request):
     
     # Calculate current metrics
     total_deliveries = current_orders.count()
-    total_earnings = current_orders.aggregate(Sum('total_price'))['total_price__sum'] or 0
+    total_earnings = current_orders.aggregate(Sum('total_amount'))['total_amount__sum'] or 0
     
     # Calculate average delivery time in minutes
     avg_delivery_time = current_orders.exclude(
@@ -107,7 +108,7 @@ def dashboard_analytics(request):
     
     # Calculate previous metrics for comparison
     prev_total_deliveries = previous_orders.count()
-    prev_total_earnings = previous_orders.aggregate(Sum('total_price'))['total_price__sum'] or 0
+    prev_total_earnings = previous_orders.aggregate(Sum('total_amount'))['total_amount__sum'] or 0
     
     prev_avg_delivery_time = previous_orders.exclude(
         order_ready_at__isnull=True
@@ -133,14 +134,14 @@ def dashboard_analytics(request):
         courier=courier,
         status__in=['delivered', 'completed'],
         delivered_at__date=yesterday
-    ).aggregate(Sum('total_price'))['total_price__sum'] or 0
+    ).aggregate(Sum('total_amount'))['total_amount__sum'] or 0
     
     day_before_yesterday = yesterday - timedelta(days=1)
     day_before_earnings = Order.objects.filter(
         courier=courier,
         status__in=['delivered', 'completed'],
         delivered_at__date=day_before_yesterday
-    ).aggregate(Sum('total_price'))['total_price__sum'] or 0
+    ).aggregate(Sum('total_amount'))['total_amount__sum'] or 0
     
     daily_earnings_change = calculate_percentage_change(
         float(yesterday_earnings), 
@@ -205,7 +206,7 @@ def earnings_chart_data(request):
             delivered_at__date=current_date
         )
 
-        total_earnings = day_orders.aggregate(Sum('total_price'))['total_price__sum'] or 0
+        total_earnings = day_orders.aggregate(Sum('total_amount'))['total_amount__sum'] or 0
         total_deliveries = day_orders.count()
 
         # Calculate average delivery time

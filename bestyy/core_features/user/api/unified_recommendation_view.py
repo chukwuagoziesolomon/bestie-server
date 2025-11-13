@@ -13,9 +13,11 @@ from typing import List, Dict, Optional
 
 from bestyy.core_features.user.models import (
     User, VendorProfile,
-    Order, Favorite
+    Favorite
 )
+from bestyy.restaurant_features.order.models import Order
 from bestyy.core_features.user.services.popularity_update_service import VendorPopularityUpdateService
+from django.conf import settings
 
 
 class UnifiedVendorRecommendationView(APIView):
@@ -59,17 +61,37 @@ class UnifiedVendorRecommendationView(APIView):
     
     def get(self, request):
         """Get unified vendor recommendations"""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"UnifiedVendorRecommendationView.get called with URL: {request.path}")
+        logger.info(f"Query params: {dict(request.GET)}")
+        logger.info(f"Request method: {request.method}")
+        logger.info(f"Request headers: {dict(request.headers)}")
+
         try:
-            # Extract parameters
-            category = request.query_params.get('category', '').strip()
-            cuisine = request.query_params.get('cuisine', '').strip()
-            limit = int(request.query_params.get('limit', 20))
-            latitude = request.query_params.get('latitude')
-            longitude = request.query_params.get('longitude')
-            city = request.query_params.get('city', '').strip()
+            # Extract parameters - handle both DRF query_params and Django GET
+            if hasattr(request, 'query_params'):
+                category = request.query_params.get('category', '').strip()
+                cuisine = request.query_params.get('cuisine', '').strip()
+                limit = int(request.query_params.get('limit', 20))
+                latitude = request.query_params.get('latitude')
+                longitude = request.query_params.get('longitude')
+                city = request.query_params.get('city', '').strip()
+            else:
+                # Fallback for Django request objects
+                category = request.GET.get('category', '').strip()
+                cuisine = request.GET.get('cuisine', '').strip()
+                limit = int(request.GET.get('limit', 20))
+                latitude = request.GET.get('latitude')
+                longitude = request.GET.get('longitude')
+                city = request.GET.get('city', '').strip()
             
-            # Get user if authenticated
-            user = request.user if request.user.is_authenticated else None
+            # Get user if authenticated - handle both DRF and Django request objects
+            if hasattr(request, 'user'):
+                user = request.user if request.user.is_authenticated else None
+            else:
+                # For Django request objects without user attribute
+                user = None
             
             # Build base queryset
             queryset = self._build_base_queryset()
@@ -121,16 +143,15 @@ class UnifiedVendorRecommendationView(APIView):
         }, status=status.HTTP_501_NOT_IMPLEMENTED)
     
     def _build_base_queryset(self):
-        """Build the base queryset for vendor recommendations"""
-        two_days_ago = timezone.now() - timedelta(days=2)
+        """Build the base queryset for vendor recommendations - open gates for launch"""
+        # Remove all restrictions - show all active vendors for maximum discovery
         return VendorProfile.objects.filter(
-            verification_status='approved',
-            is_suspended=False,
-            last_menu_update__gte=two_days_ago
-        ).select_related('user', 'subscription_plan')
+            is_suspended=False
+        ).select_related('user')
     
     def _apply_filters(self, queryset, category, cuisine, city):
-        """Apply category, cuisine, and city filters"""
+        """Apply category, cuisine, and city filters - optional for launch"""
+        # For launch, make all filters optional and less restrictive
         if category:
             queryset = queryset.filter(business_category__icontains=category)
 
@@ -139,47 +160,47 @@ class UnifiedVendorRecommendationView(APIView):
                 Q(business_category__icontains=cuisine) |
                 Q(business_description__icontains=cuisine)
             )
-        
-        if city:
-            queryset = queryset.filter(
-                Q(business_address__icontains=city) |
-                Q(service_areas__icontains=city)
-            )
+
+        # City filtering is now optional - don't restrict by location for broader discovery
+        # if city:
+        #     queryset = queryset.filter(
+        #         Q(business_address__icontains=city) |
+        #         Q(service_areas__icontains=city)
+        #     )
 
         return queryset
     
     def _apply_location_filtering(self, queryset, user_location, user):
-        """Apply location-based filtering"""
+        """Apply location-based filtering - made optional for better discovery"""
         location_q = Q()
-        
-        # Filter by user's current city if provided
+
+        # Filter by user's current city if provided, but don't be too strict
         if user_location.get('city'):
             city = user_location['city']
-            location_q |= Q(business_address__icontains=city) | Q(service_areas__icontains=city)
-        
-        return queryset.filter(location_q) if location_q else queryset
+            # Use a more flexible approach - only filter if explicitly requested
+            # For now, we'll skip strict city filtering to allow broader discovery
+            pass
+
+        return queryset  # Return all vendors for better discovery
     
     def _get_recommendations(self, queryset, limit, user):
-        """Get vendor recommendations with proper prioritization"""
-        # Get featured vendors first (they get priority)
-        featured_vendors = self._get_featured_vendors(queryset, limit // 2)
+        """Get vendor recommendations with featured priority for launch"""
+        # For launch: Featured vendors get priority, then all others
+        featured_vendors = self._get_featured_vendors(queryset, limit // 2)  # Featured get half the slots
         remaining_limit = limit - len(featured_vendors)
-        
-        # Get regular vendors for remaining slots
+
+        # Get all remaining vendors (no restrictions)
         regular_vendors = self._get_regular_vendors(queryset, remaining_limit, user)
-        
+
         # Combine and return
         all_recommendations = featured_vendors + regular_vendors
         return all_recommendations[:limit]
     
     def _get_featured_vendors(self, queryset, limit: int) -> List[Dict]:
         """Get featured vendors (those with pro subscription) with highest priority"""
-        featured_queryset = queryset.filter(
-            is_featured=True
-        ).order_by('-featured_priority', '-created_at')
-
-        featured_vendors = featured_queryset[:limit]
-        return [self._create_vendor_dict(vendor, is_featured=True) for vendor in featured_vendors]
+        # For now, return empty list since subscription model is not available
+        # TODO: Implement featured vendor logic when subscription model is restored
+        return []
     
     def _get_regular_vendors(
         self,
@@ -187,18 +208,12 @@ class UnifiedVendorRecommendationView(APIView):
         limit: int,
         user: Optional[User]
     ) -> List[Dict]:
-        """Get regular (non-featured) vendor recommendations"""
-        # Exclude featured vendors
-        queryset = queryset.exclude(is_featured=True)
-
-        # Order by creation date (newest first) since no rating system exists
+        """Get regular (non-featured) vendor recommendations - open gates for launch"""
+        # For launch: Get all available vendors, no complex scoring needed
         regular_vendors = queryset.order_by('-created_at')[:limit]
 
-        # Convert to list and sort by custom scoring
-        vendor_list = list(regular_vendors)
-        vendor_list.sort(key=lambda v: self._calculate_simple_score(v, user), reverse=True)
-
-        return [self._create_vendor_dict(vendor, is_featured=False) for vendor in vendor_list]
+        # Return all vendors without complex scoring
+        return [self._create_vendor_dict(vendor, is_featured=False) for vendor in regular_vendors]
     
     def _calculate_simple_score(self, vendor, user: Optional[User]) -> float:
         """Calculate improved recommendation score with performance metrics and time-based factors"""
@@ -209,12 +224,12 @@ class UnifiedVendorRecommendationView(APIView):
         score += float(popularity_metrics.get('popularity_score', 0)) * 0.4
         
         # Featured vendor boost (20% weight)
-        if vendor.is_featured:
-            score += 20
-        
-        # Subscription plan boost (15% weight)
-        if vendor.subscription_plan and vendor.subscription_plan.plan_type == 'pro':
-            score += 15
+        # TODO: Implement when subscription model is restored
+        # if getattr(vendor, 'is_featured', False):
+        #     score += 20
+
+        # Subscription plan boost (15% weight) - subscription model removed
+        # No subscription boost applied
         
         # Improved new vendor boost with gradual decay (10% weight)
         days_since_created = (timezone.now() - vendor.created_at).days
@@ -247,7 +262,7 @@ class UnifiedVendorRecommendationView(APIView):
     
     def _calculate_performance_score(self, vendor) -> float:
         """Calculate performance score based on order history"""
-        from bestyy.core_features.user.models import Order
+        from bestyy.restaurant_features.order.models import Order
         from datetime import timedelta
         
         # Get recent orders (last 30 days)
@@ -266,7 +281,7 @@ class UnifiedVendorRecommendationView(APIView):
         completion_rate = completed_orders / total_orders if total_orders > 0 else 0
         
         # Calculate average order value
-        total_revenue = sum(order.total_price for order in recent_orders if order.total_price)
+        total_revenue = sum(order.total_amount for order in recent_orders if order.total_amount)
         avg_order_value = total_revenue / total_orders if total_orders > 0 else 0
         
         # Performance score (0-100)
@@ -329,7 +344,7 @@ class UnifiedVendorRecommendationView(APIView):
         """Create vendor dictionary for API response with Cloudinary integration"""
         # Get popularity metrics (calculated on-demand)
         popularity_metrics = VendorPopularityUpdateService.get_vendor_metrics(vendor)
-        
+
         # Handle Cloudinary URL generation
         logo_url = None
         if vendor.logo:
@@ -346,20 +361,52 @@ class UnifiedVendorRecommendationView(APIView):
             except Exception as e:
                 # Fallback if Cloudinary URL generation fails
                 logo_url = None
-        
+
+        # Get menu items for food images - get all available items
+        menu_items = getattr(vendor, 'menu_items', None)
+        if menu_items is not None:
+            menu_items = menu_items.all()[:10]  # Get up to 10 menu items for better display
+        else:
+            menu_items = []
+        food_images = []
+        for item in menu_items:
+            if item.image:
+                try:
+                    if hasattr(item.image, 'url'):
+                        image_url = item.image.url
+                        if 'cloudinary.com' in image_url:
+                            # Transform for web optimization
+                            image_url = image_url.replace('/upload/', '/upload/w_300,h_300,c_fill,f_auto,q_auto/')
+                        else:
+                            # For local images, construct full URL
+                            image_url = f"{settings.MEDIA_URL}{image_url}"
+                        food_images.append({
+                            'id': item.id,
+                            'dish_name': item.dish_name,
+                            'image': image_url,
+                            'thumbnail': self._get_cloudinary_thumbnail(image_url) if image_url else None,
+                            'price': float(item.price)
+                        })
+                except Exception:
+                    continue
+                except Exception:
+                    continue
+
         return {
             'id': vendor.id,
             'business_name': vendor.business_name,
             'business_category': vendor.business_category,
             'business_address': vendor.business_address,
             'logo': logo_url,
+            'cover_image': self._get_cover_image_url(vendor),
             'logo_thumbnail': self._get_cloudinary_thumbnail(logo_url) if logo_url else None,
+            'food_images': food_images,  # Add food images from menu items
             'delivery_time': self._estimate_delivery_time(vendor),
             'rating': 0.0,  # No rating system implemented yet
             'total_reviews': 0,  # No review system implemented yet
             'is_featured': is_featured,
-            'featured_priority': vendor.featured_priority,
-            'subscription_plan': vendor.subscription_plan.plan_type if vendor.subscription_plan else 'free',
+            'featured_priority': getattr(vendor, 'featured_priority', 0),
+            'subscription_plan': 'free',  # TODO: Implement when subscription model is restored
             'recommendation_score': float(popularity_metrics.get('popularity_score', 0)),
             'offers_delivery': vendor.offers_delivery,
             'service_areas': vendor.service_areas.split(',') if vendor.service_areas else [],
@@ -375,6 +422,21 @@ class UnifiedVendorRecommendationView(APIView):
             # Create a smaller thumbnail version
             return logo_url.replace('/upload/', '/upload/w_100,h_100,c_fill,f_auto,q_auto/')
         return logo_url
+
+    def _get_cover_image_url(self, vendor) -> Optional[str]:
+        """Get vendor cover image URL"""
+        if hasattr(vendor, 'cover_image') and vendor.cover_image:
+            try:
+                if hasattr(vendor.cover_image, 'url'):
+                    cover_url = vendor.cover_image.url
+                    if 'cloudinary.com' in cover_url:
+                        cover_url = cover_url.replace('/upload/', '/upload/w_800,h_400,c_fill,f_auto,q_auto/')
+                    else:
+                        cover_url = f"{settings.MEDIA_URL}{cover_url}"
+                    return cover_url
+            except Exception:
+                pass
+        return None
     
     def _estimate_delivery_time(self, vendor: VendorProfile) -> str:
         """Estimate delivery time based on vendor characteristics"""

@@ -9,7 +9,8 @@ from django.utils import timezone
 from datetime import datetime, timedelta
 import calendar
 
-from ..models import Order, VendorProfile
+from bestyy.restaurant_features.order.models import Order
+from ..models import VendorProfile
 from ..serializers.order_serializers import OrderSerializer
 
 
@@ -63,10 +64,7 @@ class VendorTransactionHistoryView(generics.ListAPIView):
         # Payment status filtering
         payment_status = self.request.query_params.get('payment_status')
         if payment_status:
-            if payment_status == 'confirmed':
-                queryset = queryset.filter(payment_confirmed=True)
-            elif payment_status == 'pending':
-                queryset = queryset.filter(payment_confirmed=False)
+            queryset = queryset.filter(payment_status=payment_status)
         
         # Search functionality
         search = self.request.query_params.get('search')
@@ -107,7 +105,7 @@ def vendor_transaction_summary(request):
     # Calculate summary statistics
     total_orders = base_queryset.count()
     total_revenue = base_queryset.aggregate(
-        total=Sum('total_price')
+        total=Sum('total_amount')
     )['total'] or 0
     
     # Calculate commission (assuming 10% commission rate)
@@ -118,34 +116,34 @@ def vendor_transaction_summary(request):
     # Status breakdown
     status_breakdown = base_queryset.values('status').annotate(
         count=Count('id'),
-        revenue=Sum('total_price')
+        revenue=Sum('total_amount')
     ).order_by('status')
     
     # Payment status breakdown
-    payment_breakdown = base_queryset.values('payment_confirmed').annotate(
+    payment_breakdown = base_queryset.values('payment_status').annotate(
         count=Count('id'),
-        amount=Sum('total_price')
-    ).order_by('payment_confirmed')
+        amount=Sum('total_amount')
+    ).order_by('payment_status')
     
     # Daily revenue for the period
     daily_revenue = base_queryset.extra(
         select={'day': 'date(created_at)'}
     ).values('day').annotate(
         orders=Count('id'),
-        revenue=Sum('total_price')
+        revenue=Sum('total_amount')
     ).order_by('day')
     
     # Average order value
     avg_order_value = base_queryset.aggregate(
-        avg=Avg('total_price')
+        avg=Avg('total_amount')
     )['avg'] or 0
     
     # Top customers by order count
     top_customers = base_queryset.values(
-        'user__email', 'user__first_name', 'user__last_name'
+        'customer__email', 'customer__first_name', 'customer__last_name'
     ).annotate(
         order_count=Count('id'),
-        total_spent=Sum('total_price')
+        total_spent=Sum('total_amount')
     ).order_by('-order_count')[:5]
     
     return Response({
@@ -202,7 +200,7 @@ def vendor_earnings_breakdown(request):
             'error': 'Invalid period. Use: daily, weekly, monthly, or yearly'
         }, status=status.HTTP_400_BAD_REQUEST)
     
-    # Get earnings data
+    # Get earnings data - calculate commission in Python to avoid Django ORM issues
     earnings_data = Order.objects.filter(
         vendor=vendor,
         created_at__date__range=[start_date, end_date],
@@ -211,13 +209,16 @@ def vendor_earnings_breakdown(request):
         period=trunc_func
     ).values('period').annotate(
         orders=Count('id'),
-        revenue=Sum('total_price'),
-        commission=Sum('commission')  # Assuming commission field exists
-    ).order_by('period')
+        revenue=Sum('total_amount')
+    ).values('period', 'orders', 'revenue').order_by('period')
+
+    # Calculate commission in Python
+    for item in earnings_data:
+        item['commission_value'] = float(item['revenue'] or 0) * 0.1
     
     # Calculate totals
     total_revenue = sum(item['revenue'] or 0 for item in earnings_data)
-    total_commission = sum(item['commission'] or 0 for item in earnings_data)
+    total_commission = sum(item['commission_value'] or 0 for item in earnings_data)
     total_orders = sum(item['orders'] for item in earnings_data)
     
     # Calculate percentage changes
@@ -234,8 +235,8 @@ def vendor_earnings_breakdown(request):
             'period': item['period'].isoformat() if item['period'] else None,
             'orders': item['orders'],
             'revenue': float(item['revenue'] or 0),
-            'commission': float(item['commission'] or 0),
-            'net_earnings': float((item['revenue'] or 0) - (item['commission'] or 0)),
+            'commission': float(item['commission_value'] or 0),
+            'net_earnings': float((item['revenue'] or 0) - (item['commission_value'] or 0)),
             'percentage_change': round(percentage_change, 2)
         })
     
@@ -270,36 +271,36 @@ def vendor_payment_history(request):
     
     # Get payment status breakdown
     payment_status = Order.objects.filter(vendor=vendor).values(
-        'payment_confirmed'
+        'payment_status'
     ).annotate(
         count=Count('id'),
-        total_amount=Sum('total_price')
-    ).order_by('payment_confirmed')
+        total_amount=Sum('total_amount')
+    ).order_by('payment_status')
     
-    # Get recent payments
+    # Get recent payments - avoid payment_status field issues
     recent_payments = Order.objects.filter(
         vendor=vendor,
-        payment_confirmed=True
+        status__in=['completed', 'delivered']  # Use order status instead
     ).order_by('-created_at')[:10]
     
-    # Calculate pending payments
+    # Calculate pending payments - use order status instead
     pending_payments = Order.objects.filter(
         vendor=vendor,
-        payment_confirmed=False
+        status__in=['pending', 'confirmed', 'processing']
     ).aggregate(
         count=Count('id'),
-        total_amount=Sum('total_price')
+        total_amount=Sum('total_amount')
     )
     
     # Calculate completed payments this month
     current_month = timezone.now().replace(day=1)
     monthly_completed = Order.objects.filter(
         vendor=vendor,
-        payment_confirmed=True,
-        created_at__gte=current_month
+        created_at__gte=current_month,
+        status__in=['completed', 'delivered']  # Use order status instead
     ).aggregate(
         count=Count('id'),
-        total_amount=Sum('total_price')
+        total_amount=Sum('total_amount')
     )
     
     # Serialize recent payments
@@ -307,8 +308,8 @@ def vendor_payment_history(request):
     for payment in recent_payments:
         recent_payments_data.append({
             'order_id': payment.id,
-            'amount': float(payment.total_price),
-            'customer_email': payment.user.email,
+            'amount': float(payment.total_amount),
+            'customer_email': payment.customer.email,
             'payment_date': payment.created_at.isoformat(),
             'status': payment.status
         })
@@ -358,15 +359,15 @@ def vendor_transaction_analytics(request):
     # Current month stats
     current_stats = current_month_orders.aggregate(
         orders=Count('id'),
-        revenue=Sum('total_price'),
-        avg_order_value=Avg('total_price')
+        revenue=Sum('total_amount'),
+        avg_order_value=Avg('total_amount')
     )
     
     # Previous month stats
     prev_stats = prev_month_orders.aggregate(
         orders=Count('id'),
-        revenue=Sum('total_price'),
-        avg_order_value=Avg('total_price')
+        revenue=Sum('total_amount'),
+        avg_order_value=Avg('total_amount')
     )
     
     # Calculate growth percentages
@@ -389,23 +390,26 @@ def vendor_transaction_analytics(request):
         vendor=vendor,
         created_at__gte=current_month_start
     ).extra(
-        select={'day_of_week': 'WEEKDAY(created_at)'}
+        select={'day_of_week': "strftime('%%w', created_at)"}
     ).values('day_of_week').annotate(
         orders=Count('id'),
-        revenue=Sum('total_price')
+        revenue=Sum('total_amount')
     ).order_by('-revenue')
     
-    # Map day numbers to names
+    # Map day numbers to names (SQLite strftime returns '0' for Sunday, '1' for Monday, etc.)
     day_names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
     day_performance_data = []
     for item in day_performance:
-        day_num = int(item['day_of_week'])
-        if 0 <= day_num <= 6:
-            day_performance_data.append({
-                'day': day_names[day_num],
-                'orders': item['orders'] or 0,
-                'revenue': float(item['revenue'] or 0)
-            })
+        try:
+            day_num = int(item['day_of_week'])
+            if 0 <= day_num <= 6:
+                day_performance_data.append({
+                    'day': day_names[day_num],
+                    'orders': item['orders'] or 0,
+                    'revenue': float(item['revenue'] or 0)
+                })
+        except (ValueError, TypeError):
+            continue
     
     return Response({
         'current_month': {
@@ -560,22 +564,21 @@ def vendor_top_dishes(request):
     )
     
     # Get menu items with order counts for current period
-    from ..models import MenuItem
+    from bestyy.restaurant_features.product.models import Product as MenuItem
     current_dish_stats = MenuItem.objects.filter(
         vendor=vendor,
-        order__in=current_orders
+        order_items__order__in=current_orders
     ).annotate(
-        order_count=Count('order'),
-        total_revenue=Sum('order__total_price')
+        order_count=Count('order_items')
     ).order_by('-order_count')[:limit]
     
     # Get menu items with order counts for previous period
     prev_dish_stats = MenuItem.objects.filter(
         vendor=vendor,
-        order__in=prev_orders
+        order_items__order__in=prev_orders
     ).annotate(
-        order_count=Count('order')
-    )
+        order_count=Count('order_items')
+    ).values('id', 'order_count')
     
     # Create a dictionary for previous period data
     prev_stats_dict = {item.id: item.order_count for item in prev_dish_stats}
@@ -594,12 +597,12 @@ def vendor_top_dishes(request):
         
         top_dishes.append({
             'id': dish.id,
-            'name': dish.dish_name,
+            'name': dish.name,
             'price': float(dish.price),
             'order_count': current_count,
             'percentage_change': round(percentage_change, 1),
             'trend': 'up' if percentage_change > 0 else 'down' if percentage_change < 0 else 'stable',
-            'image': dish.image.url if dish.image else None
+            'image': dish.image.url if hasattr(dish, 'image') and dish.image else None
         })
     
     return Response({

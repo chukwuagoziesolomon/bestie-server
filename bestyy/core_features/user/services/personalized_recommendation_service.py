@@ -6,10 +6,11 @@ personalized recommendation messages sent via email, WhatsApp, and webhooks.
 from django.utils import timezone
 from datetime import timedelta, datetime
 from django.db.models import Count, Avg, Q, F
-from user.models import (
-    User, Order, VendorProfile,
-    MenuItem, Favorite, VendorRating
+from bestyy.core_features.user.models import (
+    User, VendorProfile, Favorite, UserRecommendationHistory
 )
+from bestyy.restaurant_features.order.models import Order
+from bestyy.restaurant_features.product.models import Product as MenuItem
 # Removed direct import - now using HTTP API calls for production-grade decoupling
 import random
 import logging
@@ -59,7 +60,6 @@ class PersonalizedRecommendationService:
         Cycles through all eligible users before repeating anyone.
         Focuses on users who haven't ordered in over a week.
         """
-        from user.models import UserRecommendationHistory
 
         # Get users who haven't received recommendations recently (fair cycling)
         eligible_users = UserRecommendationHistory.get_next_eligible_users(limit=limit)
@@ -196,7 +196,7 @@ class PersonalizedRecommendationService:
 
         if orders.exists():
             insights['order_frequency'] = PersonalizedRecommendationService._calculate_order_frequency(orders)
-            insights['avg_order_value'] = orders.aggregate(avg=Avg('total_price'))['avg'] or 0
+            insights['avg_order_value'] = orders.aggregate(avg=Avg('total_amount'))['avg'] or 0
             insights['last_order_date'] = orders.first().created_at
 
             # Extract preferred cuisines from order history
@@ -402,7 +402,7 @@ class PersonalizedRecommendationService:
         # Check if vendor has Pro subscription - major boost for paid subscribers
         try:
             vendor = VendorProfile.objects.get(id=vendor_id)
-            if vendor.subscription_plan and vendor.subscription_plan.plan_type == 'pro':
+            if hasattr(vendor, 'subscription') and vendor.subscription and vendor.subscription.is_featured_active:
                 score += 50  # Major boost for Pro subscribers
         except VendorProfile.DoesNotExist:
             pass

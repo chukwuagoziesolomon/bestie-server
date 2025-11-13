@@ -130,6 +130,14 @@ NIGERIAN_DISHES = {
         'description': 'Fried plantain slices, crispy and golden',
         'keywords': ['plantain', 'chips', 'fried']
     },
+
+    # Salads/Traditional
+    'abacha': {
+        'aliases': ['abacha', 'african salad', 'ugba', 'abacha ugba'],
+        'category': 'salad',
+        'description': 'Traditional Igbo African salad made from cassava flakes (abacha) mixed with ugba and spices',
+        'keywords': ['abacha', 'ugba', 'african', 'salad']
+    },
     
     # Stews
     'tomato stew': {

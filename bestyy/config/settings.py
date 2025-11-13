@@ -37,7 +37,11 @@ ALLOWED_HOSTS = ['localhost', '127.0.0.1', '.ngrok-free.app', 'f570d64ef94e.ngro
 print(f"ALLOWED_HOSTS set to: {ALLOWED_HOSTS}")
 
 # Base URL for the application
-BASE_URL = config('BASE_URL', default='http://127.0.0.1:8000')
+BASE_URL = config('BASE_URL', default='https://127.0.0.1:8000')
+# near the top of the file (import
+
+
+SELF_BASE_URL = os.getenv('SELF_BASE_URL', 'http://127.0.0.1:8000')
 
 # Google OAuth settings
 GOOGLE_OAUTH_REDIRECT_URI = f"{BASE_URL}/auth/google/callback/"
@@ -89,6 +93,7 @@ THIRD_PARTY_APPS = [
     'cloudinary_storage',
     'django_filters',
     'django.contrib.sites',
+    'sslserver',  # For HTTPS support in development
     # Temporarily disabled allauth for deployment
     # 'allauth',
     # 'allauth.account',
@@ -156,19 +161,13 @@ DATABASES = {
     }
 }
 
-# Password validation
+# Password validation - relaxed for user convenience
 AUTH_PASSWORD_VALIDATORS = [
     {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-    },
-    {
         'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+        'OPTIONS': {
+            'min_length': 6,
+        }
     },
 ]
 
@@ -397,7 +396,7 @@ if not DEBUG:
     
     # Also allow the environment variable if set
     env_cors_origins = config('CORS_ALLOWED_ORIGINS', default='')
-    if env_cors_origins:
+    if env_cors_origins and isinstance(env_cors_origins, str):
         CORS_ALLOWED_ORIGINS.extend(env_cors_origins.split(','))
     
     print(f"CORS_ALLOWED_ORIGINS set to: {CORS_ALLOWED_ORIGINS}")

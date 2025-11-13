@@ -30,13 +30,56 @@ class VendorProfileSerializer(serializers.ModelSerializer):
     suspension_duration_days = serializers.IntegerField(read_only=True)
     activation_date = serializers.DateTimeField(read_only=True)
     
+    opening_hours = serializers.TimeField(allow_null=True, required=False)
+    closing_hours = serializers.TimeField(allow_null=True, required=False)
+
     class Meta:
         model = VendorProfile
         fields = '__all__'
         read_only_fields = ('created_at', 'updated_at', 'verification_status')
         extra_kwargs = {
             'verification_status': {'read_only': True},
+            'logo': {'required': False},
+            'cover_image': {'required': False},
+            'cover_photo': {'required': False},
         }
+
+    def to_representation(self, instance):
+        """Customize the output representation to include bio, cover_photo, cover_image, and logo"""
+        data = super().to_representation(instance)
+        # Ensure bio and cover_photo are included in the response
+        data['bio'] = getattr(instance, 'bio', None)
+
+        # Handle image fields properly - return URLs for ImageFields
+        image_fields = ['cover_photo', 'cover_image', 'logo']
+        for field_name in image_fields:
+            field_value = getattr(instance, field_name, None)
+            if field_value:
+                # If it's a Cloudinary URL string, return as-is
+                if isinstance(field_value, str) and field_value.startswith('http'):
+                    data[field_name] = field_value
+                # If it's a Django ImageField/FileField, get the URL
+                elif hasattr(field_value, 'url'):
+                    try:
+                        data[field_name] = field_value.url
+                    except:
+                        data[field_name] = None
+                else:
+                    data[field_name] = None
+            else:
+                data[field_name] = None
+
+        return data
+
+    def _get_image_url(self, image_field):
+        """Get the full URL for an image field"""
+        if image_field:
+            try:
+                if hasattr(image_field, 'url'):
+                    return image_field.url
+            except:
+                pass
+        return None
 
     def create(self, validated_data):
         # Get or create user
@@ -69,6 +112,51 @@ class VendorProfileSerializer(serializers.ModelSerializer):
         
         return instance
 
+    def validate_opening_hours(self, value):
+        if value in ("", None):
+            return None
+        return value
+
+    def validate_closing_hours(self, value):
+        if value in ("", None):
+            return None
+        return value
+
+    def validate(self, attrs):
+        # Also handle object-level normalization of blank time fields
+        for field in ['opening_hours', 'closing_hours']:
+            if field in attrs and (attrs[field] == "" or attrs[field] is None):
+                attrs[field] = None
+        return super().validate(attrs)
+
+    def validate_logo(self, value):
+        return self._clean_cloudinary_image_value(value)
+
+    def validate_cover_image(self, value):
+        return self._clean_cloudinary_image_value(value)
+
+    def validate_cover_photo(self, value):
+        return self._clean_cloudinary_image_value(value)
+
+    def _clean_cloudinary_image_value(self, value):
+        # Accept null/blank
+        if value in (None, ''):
+            return None
+        # Accept file upload
+        if hasattr(value, 'read'):
+            return value
+        # Convert Cloudinary URL to public_id
+        if isinstance(value, str) and value.startswith('http'):
+            import re
+            from urllib.parse import unquote
+            cloudinary_pattern = r'res\\.cloudinary\\.com/[^/]+/image/upload/(?:v\\d+/)?(.+)'
+            match = re.search(cloudinary_pattern, value)
+            if match:
+                public_id_with_ext = unquote(match.group(1))
+                return public_id_with_ext
+            return value
+        return value
+
 class VendorRegistrationSerializer(serializers.ModelSerializer):
     """
     Serializer for vendor registration.
@@ -80,22 +168,15 @@ class VendorRegistrationSerializer(serializers.ModelSerializer):
     first_name = serializers.CharField(required=False)
     last_name = serializers.CharField(required=False)
 
-    # Bank account fields
-    bank_name = serializers.CharField(write_only=True, required=True)
-    account_number = serializers.CharField(write_only=True, required=True)
-    account_name = serializers.CharField(write_only=True, required=True)
-    bank_code = serializers.CharField(write_only=True, required=True)
 
     class Meta:
         model = VendorProfile
         fields = [
             'email', 'password', 'first_name', 'last_name',
-            'business_name', 'business_category', 'cac_number',
-            'business_description', 'logo', 'business_address',
+            'business_name', 'business_category', 'cac_number', 'tin_number',
+            'business_description', 'logo', 'cover_photo', 'business_address',
             'delivery_radius', 'service_areas', 'opening_hours',
-            'closing_hours', 'phone', 'offers_delivery',
-            # Bank account fields
-            'bank_name', 'account_number', 'account_name', 'bank_code'
+            'closing_hours', 'phone', 'offers_delivery'
         ]
         read_only_fields = ('verification_status', 'created_at', 'updated_at',
                           'email_verified', 'phone_verified', 'bank_account_verified')
@@ -106,6 +187,10 @@ class VendorRegistrationSerializer(serializers.ModelSerializer):
             'business_address': {'required': True},
             'delivery_radius': {'required': True},
             'service_areas': {'required': True},
+            'opening_hours': {'required': True},
+            'closing_hours': {'required': True},
+            'logo': {'required': False},
+            'cover_photo': {'required': False},
         }
     
     def validate_email(self, value):
@@ -131,27 +216,22 @@ class VendorRegistrationSerializer(serializers.ModelSerializer):
             'phone': validated_data.get('phone'),
         }
 
-        # Extract bank account data
-        bank_data = {
-            'bank_name': validated_data.pop('bank_name'),
-            'account_number': validated_data.pop('account_number'),
-            'account_name': validated_data.pop('account_name'),
-            'bank_code': validated_data.pop('bank_code'),
-        }
-
         # Prepare profile data (everything except user fields)
         profile_data = dict(validated_data)
-        profile_data.update(bank_data)
 
         # Generate verification code
         verification_code = str(random.randint(100000, 999999))
 
         # Create pending user instead of actual user
+        from django.utils import timezone
+        from datetime import timedelta
+
         pending_user = PendingUser.objects.create(
             **user_data,
             user_type='vendor',
             verification_code=verification_code,
-            profile_data=profile_data
+            profile_data=profile_data,
+            expires_at=timezone.now() + timedelta(hours=24)  # Expire in 24 hours
         )
 
         return pending_user

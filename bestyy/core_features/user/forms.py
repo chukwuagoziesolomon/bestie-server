@@ -1,6 +1,6 @@
 from django import forms
 from django.contrib.auth.forms import UserCreationForm, UserChangeForm
-from .models import User
+from .models import User, VendorProfile, CourierProfile
 
 class CustomUserCreationForm(UserCreationForm):
     class Meta(UserCreationForm.Meta):
@@ -63,3 +63,30 @@ class AdminPasswordChangeForm(forms.Form):
             if name not in data:
                 return []
         return data
+
+class VendorSignupForm(forms.Form):
+    """Form for vendor signup"""
+    email = forms.EmailField(required=True)
+    password = forms.CharField(widget=forms.PasswordInput, required=True)
+    first_name = forms.CharField(max_length=150, required=True)
+    last_name = forms.CharField(max_length=150, required=True)
+    phone = forms.CharField(max_length=16, required=True)
+    business_name = forms.CharField(max_length=255, required=True)
+    business_address = forms.CharField(max_length=255, required=True)
+    business_description = forms.CharField(widget=forms.Textarea, required=False)
+
+class CourierSignupForm(forms.Form):
+    """Form for courier signup"""
+    email = forms.EmailField(required=True)
+    password = forms.CharField(widget=forms.PasswordInput, required=True)
+    first_name = forms.CharField(max_length=150, required=True)
+    last_name = forms.CharField(max_length=150, required=True)
+    phone = forms.CharField(max_length=16, required=True)
+    service_areas = forms.CharField(max_length=255, required=True)
+    vehicle_type = forms.ChoiceField(choices=[
+        ('bike', 'Bike'),
+        ('car', 'Car'),
+        ('van', 'Van'),
+        ('other', 'Other'),
+    ], required=True)
+    has_bike = forms.BooleanField(required=False)

@@ -4,7 +4,9 @@ Service for automatically managing user favorites based on ordering behavior.
 from django.utils import timezone
 from datetime import timedelta
 from django.db.models import Count, Q
-from user.models import Order, Favorite, MenuItem, VendorProfile
+from bestyy.restaurant_features.order.models import Order
+from . import __init__  # placeholder to maintain module structure
+from user.models import VendorProfile
 
 
 class AutoFavoriteService:

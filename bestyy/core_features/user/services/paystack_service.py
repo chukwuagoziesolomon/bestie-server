@@ -1,7 +1,7 @@
 import requests
 from django.conf import settings
 from django.utils import timezone
-from bestyy.core_features.user.models import User
+from bestyy.core_features.user.models import User, DedicatedVirtualAccount
 import logging
 
 logger = logging.getLogger(__name__)
@@ -210,7 +210,7 @@ class PaystackService:
         """Deprecated: Do not use split payments."""
         raise NotImplementedError('Split logic is deprecated.')
 
-    def get_supported_banks(self):
+    def get_supported_banks_providers(self):
         """Get list of supported banks for dedicated accounts"""
         response = self._make_request('GET', '/dedicated_account/available_providers')
 
@@ -356,4 +356,254 @@ class PaystackService:
             'success': False,
             'banks': [],
             'error': response.get('message') if response else 'Unable to fetch banks'
+        }
+
+    # Subscription-related methods
+    def create_plan(self, name, interval, amount, description=None, invoice_limit=None):
+        """
+        Create a subscription plan on Paystack
+
+        Args:
+            name (str): Plan name
+            interval (str): 'hourly', 'daily', 'weekly', 'monthly', 'quarterly', 'biannually', 'annually'
+            amount (int): Amount in kobo (smallest currency unit)
+            description (str, optional): Plan description
+            invoice_limit (int, optional): Maximum number of charges
+
+        Returns:
+            dict: {'success': bool, 'plan_code': str or 'error': str}
+        """
+        data = {
+            'name': name,
+            'interval': interval,
+            'amount': amount
+        }
+
+        if description:
+            data['description'] = description
+        if invoice_limit:
+            data['invoice_limit'] = invoice_limit
+
+        response = self._make_request('POST', '/plan', data)
+
+        if response and response.get('status'):
+            plan_data = response.get('data', {})
+            return {
+                'success': True,
+                'plan_code': plan_data.get('plan_code'),
+                'plan_data': plan_data
+            }
+
+        return {'success': False, 'error': response.get('message') if response else 'API Error'}
+
+    def create_subscription(self, customer_code, plan_code, authorization_code=None, start_date=None):
+        """
+        Create a subscription for a customer
+
+        Args:
+            customer_code (str): Paystack customer code
+            plan_code (str): Paystack plan code
+            authorization_code (str, optional): Specific authorization to use
+            start_date (str, optional): ISO 8601 date string for first charge
+
+        Returns:
+            dict: {'success': bool, 'subscription_code': str or 'error': str}
+        """
+        data = {
+            'customer': customer_code,
+            'plan': plan_code
+        }
+
+        if authorization_code:
+            data['authorization'] = authorization_code
+        if start_date:
+            data['start_date'] = start_date
+
+        response = self._make_request('POST', '/subscription', data)
+
+        if response and response.get('status'):
+            subscription_data = response.get('data', {})
+            return {
+                'success': True,
+                'subscription_code': subscription_data.get('subscription_code'),
+                'subscription_data': subscription_data
+            }
+
+        return {'success': False, 'error': response.get('message') if response else 'API Error'}
+
+    def initialize_subscription_transaction(self, email, plan_code, amount=None, interval=None):
+        """
+        Initialize a transaction that creates a subscription upon payment
+
+        Args:
+            email (str): Customer email
+            plan_code (str): Paystack plan code
+            amount (int, optional): Override plan amount in kobo
+            interval (str, optional): Override plan interval ('daily', 'weekly', 'monthly')
+
+        Returns:
+            dict: {'success': bool, 'authorization_url': str or 'error': str}
+        """
+        data = {
+            'email': email,
+            'plan': plan_code
+        }
+
+        if amount:
+            data['amount'] = amount
+
+        # Note: Paystack doesn't support interval override in transaction initialization
+        # The interval is set at the plan level
+
+        response = self._make_request('POST', '/transaction/initialize', data)
+
+        if response and response.get('status'):
+            return {
+                'success': True,
+                'authorization_url': response.get('data', {}).get('authorization_url'),
+                'access_code': response.get('data', {}).get('access_code'),
+                'reference': response.get('data', {}).get('reference')
+            }
+
+        return {
+            'success': False,
+            'error': response.get('message') if response else 'API Error'
+        }
+
+    def get_subscription(self, subscription_code):
+        """
+        Get subscription details
+
+        Args:
+            subscription_code (str): Paystack subscription code
+
+        Returns:
+            dict: Subscription data or None
+        """
+        response = self._make_request('GET', f'/subscription/{subscription_code}')
+
+        if response and response.get('status'):
+            return response.get('data', {})
+        return None
+
+    def list_subscriptions(self, customer=None, plan=None):
+        """
+        List subscriptions with optional filtering
+
+        Args:
+            customer (str, optional): Filter by customer code
+            plan (str, optional): Filter by plan code
+
+        Returns:
+            list: List of subscriptions
+        """
+        params = {}
+        if customer:
+            params['customer'] = customer
+        if plan:
+            params['plan'] = plan
+
+        response = self._make_request('GET', '/subscription', params)
+
+        if response and response.get('status'):
+            return response.get('data', [])
+        return []
+
+    def disable_subscription(self, subscription_code, token=None):
+        """
+        Disable/cancel a subscription
+
+        Args:
+            subscription_code (str): Paystack subscription code
+            token (str, optional): Email token for confirmation
+
+        Returns:
+            dict: {'success': bool, 'error': str}
+        """
+        data = {}
+        if token:
+            data['token'] = token
+
+        response = self._make_request('POST', f'/subscription/disable/{subscription_code}', data)
+
+        if response and response.get('status'):
+            return {'success': True}
+
+        return {'success': False, 'error': response.get('message') if response else 'API Error'}
+
+    def enable_subscription(self, subscription_code):
+        """
+        Enable a subscription
+
+        Args:
+            subscription_code (str): Paystack subscription code
+
+        Returns:
+            dict: {'success': bool, 'error': str}
+        """
+        response = self._make_request('POST', f'/subscription/enable/{subscription_code}')
+
+        if response and response.get('status'):
+            return {'success': True}
+
+        return {'success': False, 'error': response.get('message') if response else 'API Error'}
+
+    def get_subscription_link(self, subscription_code):
+        """
+        Get subscription management link
+
+        Args:
+            subscription_code (str): Paystack subscription code
+
+        Returns:
+            dict: {'success': bool, 'link': str or 'error': str}
+        """
+        response = self._make_request('GET', f'/subscription/{subscription_code}/manage/link')
+
+        if response and response.get('status'):
+            return {
+                'success': True,
+                'link': response.get('data', {}).get('link')
+            }
+
+        return {'success': False, 'error': response.get('message') if response else 'API Error'}
+
+    def send_subscription_update_email(self, subscription_code):
+        """
+        Send subscription management email
+
+        Args:
+            subscription_code (str): Paystack subscription code
+
+        Returns:
+            dict: {'success': bool, 'error': str}
+        """
+        response = self._make_request('POST', f'/subscription/{subscription_code}/manage/email')
+
+        if response and response.get('status'):
+            return {'success': True}
+
+        return {'success': False, 'error': response.get('message') if response else 'API Error'}
+
+    def verify_transaction(self, reference):
+        """
+        Verify transaction status using Paystack Verify API
+
+        Args:
+            reference (str): Transaction reference
+
+        Returns:
+            dict: {'success': bool, 'data': dict or 'error': str}
+        """
+        response = self._make_request('GET', f'/transaction/verify/{reference}')
+
+        if response and response.get('status'):
+            return {
+                'success': True,
+                'data': response.get('data', {})
+            }
+
+        return {
+            'success': False,
+            'error': response.get('message') if response else 'API Error'
         }

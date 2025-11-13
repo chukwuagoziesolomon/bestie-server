@@ -12,7 +12,7 @@ from typing import Dict
 import logging
 from rest_framework.throttling import UserRateThrottle
 
-from ..models import Order, CryptoPayment
+from bestyy.restaurant_features.order.models import Order
 from ..services.crypto_payment_service import CryptoPaymentManager, CryptoRateService
 
 logger = logging.getLogger(__name__)
@@ -39,26 +39,12 @@ class CryptoPaymentCreateView(APIView):
             # Get order
             order = get_object_or_404(Order, id=order_id, user=request.user)
 
-            # Check if order already has crypto payment
-            existing_crypto = CryptoPayment.objects.filter(
-                order=order,
-                payment_status__in=['waiting', 'confirming']
-            ).first()
-
-            if existing_crypto:
-                return Response({
-                    'success': True,
-                    'payment': CryptoPaymentManager()._format_payment_data(existing_crypto)
-                })
-
-            # Create new crypto payment
-            payment_manager = CryptoPaymentManager()
-            crypto_payment = payment_manager.create_crypto_payment(order, crypto_currency)
-
+            # Crypto payments not implemented - return error
             return Response({
-                'success': True,
-                'payment': CryptoPaymentManager()._format_payment_data(crypto_payment)
-            })
+                'success': False,
+                'error': 'Cryptocurrency payments are not currently available',
+                'message': 'Please use Paystack for payment processing'
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         except Order.DoesNotExist:
             return Response({
@@ -83,32 +69,12 @@ class CryptoPaymentStatusView(APIView):
     def get(self, request, payment_id):
         """Get payment status"""
         try:
-            crypto_payment = get_object_or_404(
-                CryptoPayment,
-                nowpayments_payment_id=payment_id,
-                order__user=request.user
-            )
-
-            # Refresh status from NOWPayments API
-            payment_manager = CryptoPaymentManager()
-            status_response = payment_manager.nowpayments.get_payment_status(payment_id)
-
-            if status_response["success"]:
-                # Update local status if different
-                remote_status = status_response["payment_data"]["payment_status"]
-                if crypto_payment.payment_status != remote_status:
-                    crypto_payment.update_status_from_webhook(status_response["payment_data"])
-
-            return Response({
-                'success': True,
-                'payment': CryptoPaymentManager()._format_payment_data(crypto_payment)
-            })
-
-        except CryptoPayment.DoesNotExist:
+            # Crypto payments not implemented
             return Response({
                 'success': False,
-                'error': 'Payment not found'
-            }, status=status.HTTP_404_NOT_FOUND)
+                'error': 'Cryptocurrency payments are not currently available',
+                'message': 'Please use Paystack for payment processing'
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as e:
             logger.error(f"Error fetching payment status: {str(e)}")
@@ -242,39 +208,17 @@ class CryptoPaymentListView(APIView):
     def get(self, request):
         """Get user's crypto payments"""
         try:
-            # Get query parameters
-            page = int(request.query_params.get('page', 1))
-            page_size = int(request.query_params.get('page_size', 10))
-            status_filter = request.query_params.get('status')
-
-            # Build queryset
-            queryset = CryptoPayment.objects.filter(
-                order__user=request.user
-            ).select_related('order').order_by('-created_at')
-
-            if status_filter:
-                queryset = queryset.filter(payment_status=status_filter)
-
-            # Pagination
-            total_count = queryset.count()
-            start_index = (page - 1) * page_size
-            end_index = start_index + page_size
-
-            payments = queryset[start_index:end_index]
-
-            # Format response
-            payment_data = []
-            for payment in payments:
-                payment_data.append(CryptoPaymentManager()._format_payment_data(payment))
-
+            # Crypto payments not implemented
             return Response({
-                'success': True,
-                'payments': payment_data,
+                'success': False,
+                'error': 'Cryptocurrency payments are not currently available',
+                'message': 'Please use Paystack for payment processing',
+                'payments': [],
                 'pagination': {
-                    'page': page,
-                    'page_size': page_size,
-                    'total_count': total_count,
-                    'total_pages': (total_count + page_size - 1) // page_size
+                    'page': 1,
+                    'page_size': 10,
+                    'total_count': 0,
+                    'total_pages': 0
                 }
             })
 

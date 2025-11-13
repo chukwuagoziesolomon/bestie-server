@@ -6,7 +6,7 @@ from django.core.paginator import Paginator
 from django.db.models import Q
 from datetime import datetime, timedelta
 
-from bestyy.core_features.user.models import Order
+from bestyy.restaurant_features.order.models import Order
 
 
 class VendorOrdersPagination(PageNumberPagination):
@@ -54,7 +54,7 @@ class VendorOrdersView(APIView):
         page_size = min(100, int(request.query_params.get('page_size', 20)))
         
         # Validate sort parameters
-        valid_sort_fields = ['created_at', 'total_price', 'status']
+        valid_sort_fields = ['created_at', 'total_amount', 'status']
         if sort_by not in valid_sort_fields:
             sort_by = 'created_at'
         
@@ -62,16 +62,16 @@ class VendorOrdersView(APIView):
             sort_order = 'desc'
         
         # Build queryset
-        queryset = Order.objects.filter(vendor=vendor).select_related('user')
-        
+        queryset = Order.objects.filter(vendor=vendor).select_related('customer')
+
         # Apply search filter
         if search:
             queryset = queryset.filter(
-                Q(id__icontains=search) |
-                Q(user__first_name__icontains=search) |
-                Q(user__last_name__icontains=search) |
-                Q(user__email__icontains=search) |
-                Q(delivery_address__icontains=search)
+                Q(order_number__icontains=search) |
+                Q(customer__first_name__icontains=search) |
+                Q(customer__last_name__icontains=search) |
+                Q(customer__email__icontains=search) |
+                Q(shipping_address__icontains=search)
             )
         
         # Apply status filter
@@ -107,9 +107,9 @@ class VendorOrdersView(APIView):
         orders_data = []
         for order in page_obj:
             # Get customer name
-            customer_name = order.user.get_full_name() if order.user else "Unknown Customer"
+            customer_name = order.customer.get_full_name() if order.customer else "Unknown Customer"
             if not customer_name.strip():
-                customer_name = order.user.email if order.user else "Unknown Customer"
+                customer_name = order.customer.email if order.customer else "Unknown Customer"
             
             # Get delivery address (first 100 characters)
             delivery_address = order.delivery_address[:100] + "..." if order.delivery_address and len(order.delivery_address) > 100 else order.delivery_address or "No address"
@@ -119,14 +119,12 @@ class VendorOrdersView(APIView):
                 "name": customer_name,
                 "address": delivery_address,
                 "date": order.created_at.strftime('%Y-%m-%d %H:%M:%S'),
-                "total_amount": float(order.total_price or 0),
+                "total_amount": float(order.total_amount or 0),
                 "status": order.status,
-                "customer_email": order.user.email if order.user else None,
-                "customer_phone": getattr(order.user, 'phone', None) if order.user else None,
+                "customer_email": order.customer.email if order.customer else None,
+                "customer_phone": getattr(order.customer, 'phone', None) if order.customer else None,
                 "payment_confirmed": order.payment_confirmed,
-                "user_receipt_confirmed": order.user_receipt_confirmed,
-                "delivered_at": order.delivered_at.strftime('%Y-%m-%d %H:%M:%S') if order.delivered_at else None,
-                "order_placed_at": order.order_placed_at.strftime('%Y-%m-%d %H:%M:%S') if order.order_placed_at else None
+                "delivered_at": order.delivered_at.strftime('%Y-%m-%d %H:%M:%S') if order.delivered_at else None
             })
         
         # Prepare response
@@ -172,7 +170,7 @@ class VendorOrderDetailView(APIView):
         vendor = user.vendor_profile
         
         try:
-            order = Order.objects.select_related('user', 'vendor').get(id=order_id, vendor=vendor)
+            order = Order.objects.select_related('customer', 'vendor').get(id=order_id, vendor=vendor)
         except Order.DoesNotExist:
             return Response(
                 {"detail": "Order not found or you don't have permission to view this order."},
@@ -180,36 +178,33 @@ class VendorOrderDetailView(APIView):
             )
         
         # Get customer name
-        customer_name = order.user.get_full_name() if order.user else "Unknown Customer"
+        customer_name = order.customer.get_full_name() if order.customer else "Unknown Customer"
         if not customer_name.strip():
-            customer_name = order.user.email if order.user else "Unknown Customer"
+            customer_name = order.customer.email if order.customer else "Unknown Customer"
         
         # Serialize order details
         order_data = {
             "id": order.id,
             "customer": {
-                "id": order.user.id if order.user else None,
+                "id": order.customer.id if order.customer else None,
                 "name": customer_name,
-                "email": order.user.email if order.user else None,
-                "phone": getattr(order.user, 'phone', None) if order.user else None
+                "email": order.customer.email if order.customer else None,
+                "phone": getattr(order.customer, 'phone', None) if order.customer else None
             },
             "vendor": {
-                "id": order.vendor.id,
-                "name": order.vendor.business_name,
-                "address": order.vendor.business_address
+                "id": order.vendor.id if order.vendor else None,
+                "name": order.vendor.business_name if order.vendor else None,
+                "address": order.vendor.business_address if order.vendor else None
             },
             "order_details": {
-                "total_amount": float(order.total_price or 0),
+                "order_number": order.order_number,
+                "total_amount": float(order.total_amount or 0),
                 "status": order.status,
                 "payment_confirmed": order.payment_confirmed,
-                "user_receipt_confirmed": order.user_receipt_confirmed,
-                "delivery_address": order.delivery_address,
-                "delivery_date": order.delivery_date.strftime('%Y-%m-%d') if order.delivery_date else None,
-                "order_name": order.order_name
+                "delivery_address": order.delivery_address
             },
             "timestamps": {
                 "created_at": order.created_at.strftime('%Y-%m-%d %H:%M:%S'),
-                "order_placed_at": order.order_placed_at.strftime('%Y-%m-%d %H:%M:%S') if order.order_placed_at else None,
                 "delivered_at": order.delivered_at.strftime('%Y-%m-%d %H:%M:%S') if order.delivered_at else None
             },
             "items": []  # You can add order items here if needed

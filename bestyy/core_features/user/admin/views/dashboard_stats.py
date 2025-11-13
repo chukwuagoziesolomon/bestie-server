@@ -12,7 +12,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from bestyy.core_features.user.permissions import IsAdminUser
-from bestyy.core_features.user.models import Order, VendorProfile, CourierProfile
+from bestyy.core_features.user.models import VendorProfile, CourierProfile
+from bestyy.restaurant_features.order.models import Order
 from django.contrib.auth import get_user_model
 
 logger = logging.getLogger(__name__)

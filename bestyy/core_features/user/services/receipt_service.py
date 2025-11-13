@@ -57,11 +57,11 @@ class ReceiptService:
                 'customer_name': f"{order.user.first_name} {order.user.last_name}".strip() or order.user.email,
                 'vendor_name': order.vendor.business_name,
                 'items': items,
-                'subtotal': subtotal,
+                'subtotal': float(order.total_amount),
                 'delivery_fee': delivery_fee,
                 'service_fee': service_fee,
                 'discount': discount,
-                'total_amount': total_amount,
+                'total_amount': float(order.total_amount + order.delivery_fee),
                 'payment_method': getattr(order, 'payment_method', 'Unknown'),
                 'payment_reference': getattr(order, 'payment_reference', None),
                 'delivery_address': delivery_address,
@@ -179,13 +179,17 @@ Thank you for choosing Bestyy! 🚀
             
             # Send via WhatsApp
             whatsapp_sent = ReceiptService.send_receipt_whatsapp(order.user, order, receipt_data)
-            
+
+            # Send receipt images to all parties
+            image_sent = ReceiptService.send_receipt_images(order, receipt_data)
+
             return {
                 'success': True,
                 'email_sent': email_sent,
                 'whatsapp_sent': whatsapp_sent,
+                'image_sent': image_sent,
                 'receipt_data': receipt_data,
-                'message': f"Receipt sent via {'email' if email_sent else 'failed'}, {'WhatsApp' if whatsapp_sent else 'failed'}"
+                'message': f"Receipt sent via {'email' if email_sent else 'failed'}, {'WhatsApp' if whatsapp_sent else 'failed'}, {'images' if image_sent else 'failed'}"
             }
             
         except Exception as e:

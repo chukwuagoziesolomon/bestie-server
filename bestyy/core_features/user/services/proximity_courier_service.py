@@ -7,7 +7,8 @@ import math
 from typing import Dict, List, Optional, Tuple
 from django.utils import timezone
 from django.db.models import Q
-from ..models import CourierProfile, VendorProfile, Order
+from ..models import CourierProfile, VendorProfile
+from bestyy.restaurant_features.order.models import Order
 from .ai_memory_service import AIMemoryService
 
 logger = logging.getLogger(__name__)

@@ -10,9 +10,9 @@ from django.utils import timezone
 from typing import List, Dict, Optional
 
 from bestyy.core_features.user.models import (
-    User, VendorProfile,
-    Order, Favorite
+    User, VendorProfile
 )
+from bestyy.restaurant_features.order.models import Order
 
 
 class VendorSearchView(APIView):
@@ -33,21 +33,39 @@ class VendorSearchView(APIView):
     def get(self, request):
         """Search vendors with advanced filtering"""
         try:
-            # Extract search parameters
-            query = request.query_params.get('q', '').strip()
-            state = request.query_params.get('state', '').strip()
-            city = request.query_params.get('city', '').strip()
-            area = request.query_params.get('area', '').strip()
-            cuisine = request.query_params.get('cuisine', '').strip()
-            min_price = request.query_params.get('min_price')
-            max_price = request.query_params.get('max_price')
-            min_rating = request.query_params.get('min_rating')
-            delivery_only = request.query_params.get('delivery_only', 'false').lower() == 'true'
-            page = int(request.query_params.get('page', 1))
-            page_size = int(request.query_params.get('page_size', 5))
+            # Extract search parameters - handle both DRF query_params and Django GET
+            if hasattr(request, 'query_params'):
+                query = request.query_params.get('q', '').strip()
+                state = request.query_params.get('state', '').strip()
+                city = request.query_params.get('city', '').strip()
+                area = request.query_params.get('area', '').strip()
+                cuisine = request.query_params.get('cuisine', '').strip()
+                min_price = request.query_params.get('min_price')
+                max_price = request.query_params.get('max_price')
+                min_rating = request.query_params.get('min_rating')
+                delivery_only = request.query_params.get('delivery_only', 'false').lower() == 'true'
+                page = int(request.query_params.get('page', 1))
+                page_size = int(request.query_params.get('page_size', 5))
+            else:
+                # Fallback for Django request objects
+                query = request.GET.get('q', '').strip()
+                state = request.GET.get('state', '').strip()
+                city = request.GET.get('city', '').strip()
+                area = request.GET.get('area', '').strip()
+                cuisine = request.GET.get('cuisine', '').strip()
+                min_price = request.GET.get('min_price')
+                max_price = request.GET.get('max_price')
+                min_rating = request.GET.get('min_rating')
+                delivery_only = request.GET.get('delivery_only', 'false').lower() == 'true'
+                page = int(request.GET.get('page', 1))
+                page_size = int(request.GET.get('page_size', 5))
             
-            # Get user for personalized results
-            user = request.user if request.user.is_authenticated else None
+            # Get user for personalized results - handle both DRF and Django request objects
+            if hasattr(request, 'user'):
+                user = request.user if request.user.is_authenticated else None
+            else:
+                # For Django request objects without user attribute
+                user = None
             
             # Build search results
             search_results = self._search_vendors(
@@ -118,9 +136,8 @@ class VendorSearchView(APIView):
         two_days_ago = timezone.now() - timedelta(days=2)
 
         queryset = VendorProfile.objects.filter(
-            verification_status='approved',
             is_suspended=False
-        ).select_related('user', 'subscription_plan').annotate(
+        ).select_related('user').annotate(
             # No rating system implemented yet
             avg_rating=Avg('id'),  # Placeholder
             total_reviews=Count('id'),  # Placeholder
@@ -234,7 +251,7 @@ class VendorSearchView(APIView):
         
         # Boost for featured vendors (pro subscription)
         score += Case(
-            When(subscription_plan__plan_type='pro', then=50),
+            When(subscription__status__in=['active', 'non-renewing'], subscription__plan__plan_type='pro', then=50),
             default=0,
             output_field=DecimalField()
         )
@@ -314,7 +331,7 @@ class VendorSearchView(APIView):
             'logo': logo_url,
             'rating': float(vendor.avg_rating or 0),
             'total_reviews': vendor.total_reviews or 0,
-            'is_featured': vendor.subscription_plan.plan_type == 'pro' if vendor.subscription_plan else False,
+            'is_featured': vendor.is_featured,
             'offers_delivery': vendor.offers_delivery,
             'delivery_time': self._estimate_delivery_time(vendor),
             'service_areas': vendor.service_areas.split(',') if vendor.service_areas else [],
@@ -362,7 +379,7 @@ class SearchFiltersView(APIView):
         try:
             # Get unique states from vendor addresses
             states = VendorProfile.objects.filter(
-                verification_status='approved',
+                is_suspended=False,
                 business_address__isnull=False
             ).exclude(business_address='').values_list('business_address', flat=True)
             
@@ -378,7 +395,7 @@ class SearchFiltersView(APIView):
             
             # Get unique cities
             cities = VendorProfile.objects.filter(
-                verification_status='approved',
+                is_suspended=False,
                 business_address__isnull=False
             ).exclude(business_address='').values_list('business_address', flat=True)
             
@@ -392,7 +409,7 @@ class SearchFiltersView(APIView):
             
             # Get unique cuisine types
             cuisines = VendorProfile.objects.filter(
-                verification_status='approved'
+                is_suspended=False
             ).exclude(business_category='').values_list('business_category', flat=True)
             
             unique_cuisines = set()
@@ -406,8 +423,8 @@ class SearchFiltersView(APIView):
                             unique_cuisines.add(cat)
             
             # Get price ranges from menu items
-            from bestyy.core_features.user.models import MenuItem
-            prices = MenuItem.objects.filter(
+            from bestyy.restaurant_features.product.models import Product
+            prices = Product.objects.filter(
                 vendor__verification_status='approved'
             ).values_list('price', flat=True).order_by('price')
             

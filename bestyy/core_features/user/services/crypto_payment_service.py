@@ -12,7 +12,7 @@ from typing import Dict, Optional, Tuple
 from django.conf import settings
 from django.core.cache import cache
 from django.utils import timezone
-from bestyy.core_features.user.models import Order
+from bestyy.restaurant_features.order.models import Order
 # CryptoPayment model removed - crypto payments not implemented
 
 logger = logging.getLogger(__name__)

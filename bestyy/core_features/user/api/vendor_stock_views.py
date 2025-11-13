@@ -6,7 +6,8 @@ from rest_framework.pagination import PageNumberPagination
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 
-from ..models import MenuItem, VendorProfile
+from bestyy.restaurant_features.product.models import Product as MenuItem
+from ..models import VendorProfile
 from ..serializers.menu_serializers import MenuItemSerializer
 
 
@@ -38,31 +39,31 @@ class VendorStockListView(generics.ListAPIView):
         availability = self.request.query_params.get('availability')
         if availability is not None:
             if availability.lower() == 'true':
-                queryset = queryset.filter(available_now=True)
+                queryset = queryset.filter(is_available=True)
             elif availability.lower() == 'false':
-                queryset = queryset.filter(available_now=False)
-        
+                queryset = queryset.filter(is_available=False)
+
         category = self.request.query_params.get('category')
         if category:
-            queryset = queryset.filter(category__icontains=category)
-        
+            queryset = queryset.filter(category__name__icontains=category)
+
         # Filter by stock status
         stock_status = self.request.query_params.get('stock_status')
         if stock_status:
             if stock_status == 'in_stock':
-                queryset = queryset.filter(quantity__gt=0)
+                queryset = queryset.filter(stock_quantity__gt=0)
             elif stock_status == 'out_of_stock':
-                queryset = queryset.filter(quantity=0)
+                queryset = queryset.filter(stock_quantity=0)
             elif stock_status == 'low_stock':
-                queryset = queryset.filter(quantity__gt=0, quantity__lte=10)
-        
+                queryset = queryset.filter(stock_quantity__gt=0, stock_quantity__lte=10)
+
         # Search functionality
         search = self.request.query_params.get('search')
         if search:
             queryset = queryset.filter(
-                Q(dish_name__icontains=search) |
-                Q(item_description__icontains=search) |
-                Q(category__icontains=search)
+                Q(name__icontains=search) |
+                Q(description__icontains=search) |
+                Q(category__name__icontains=search)
             )
         
         return queryset
@@ -100,15 +101,15 @@ def toggle_item_availability(request, item_id):
     
     try:
         menu_item = get_object_or_404(MenuItem, id=item_id, vendor=vendor)
-        
+
         # Toggle availability
-        menu_item.available_now = not menu_item.available_now
+        menu_item.is_available = not menu_item.is_available
         menu_item.save()
-        
+
         serializer = MenuItemSerializer(menu_item)
-        
+
         return Response({
-            'message': f'Item {"made available" if menu_item.available_now else "marked as unavailable"}',
+            'message': f'Item {"made available" if menu_item.is_available else "marked as unavailable"}',
             'item': serializer.data
         }, status=status.HTTP_200_OK)
         
@@ -148,7 +149,7 @@ def bulk_toggle_availability(request):
         updated_count = MenuItem.objects.filter(
             id__in=item_ids,
             vendor=vendor
-        ).update(available_now=availability)
+        ).update(is_available=availability)
         
         return Response({
             'message': f'Updated availability for {updated_count} items',
@@ -177,21 +178,21 @@ def stock_summary(request):
     
     # Get stock statistics
     total_items = MenuItem.objects.filter(vendor=vendor).count()
-    available_items = MenuItem.objects.filter(vendor=vendor, available_now=True).count()
-    unavailable_items = MenuItem.objects.filter(vendor=vendor, available_now=False).count()
-    in_stock_items = MenuItem.objects.filter(vendor=vendor, quantity__gt=0).count()
-    out_of_stock_items = MenuItem.objects.filter(vendor=vendor, quantity=0).count()
-    low_stock_items = MenuItem.objects.filter(vendor=vendor, quantity__gt=0, quantity__lte=10).count()
-    
+    available_items = MenuItem.objects.filter(vendor=vendor, is_available=True).count()
+    unavailable_items = MenuItem.objects.filter(vendor=vendor, is_available=False).count()
+    in_stock_items = MenuItem.objects.filter(vendor=vendor, stock_quantity__gt=0).count()
+    out_of_stock_items = MenuItem.objects.filter(vendor=vendor, stock_quantity=0).count()
+    low_stock_items = MenuItem.objects.filter(vendor=vendor, stock_quantity__gt=0, stock_quantity__lte=10).count()
+
     # Get category breakdown
-    categories = MenuItem.objects.filter(vendor=vendor).values('category').distinct()
+    categories = MenuItem.objects.filter(vendor=vendor).values('category__name').distinct()
     category_stats = []
-    
+
     for category in categories:
-        cat_name = category['category']
-        cat_total = MenuItem.objects.filter(vendor=vendor, category=cat_name).count()
-        cat_available = MenuItem.objects.filter(vendor=vendor, category=cat_name, available_now=True).count()
-        cat_out_of_stock = MenuItem.objects.filter(vendor=vendor, category=cat_name, quantity=0).count()
+        cat_name = category['category__name']
+        cat_total = MenuItem.objects.filter(vendor=vendor, category__name=cat_name).count()
+        cat_available = MenuItem.objects.filter(vendor=vendor, category__name=cat_name, is_available=True).count()
+        cat_out_of_stock = MenuItem.objects.filter(vendor=vendor, category__name=cat_name, stock_quantity=0).count()
         
         category_stats.append({
             'category': cat_name,

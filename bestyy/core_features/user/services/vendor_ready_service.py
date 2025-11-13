@@ -200,7 +200,7 @@ class VendorReadyService:
                     order_info = {
                         'order_id': order.id,
                         'status': order.status,
-                        'total_price': order.total_price,
+                        'total_amount': order.total_amount,
                         'delivery_address': order.delivery_address,
                         'order_placed_at': order.order_placed_at.isoformat(),
                         'courier_assigned': order.courier is not None,

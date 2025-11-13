@@ -9,7 +9,8 @@ from django.db.models import Count, Q
 from django.utils import timezone
 from datetime import timedelta
 
-from bestyy.core_features.user.models import User, CourierProfile, VendorProfile, Order
+from bestyy.core_features.user.models import User, CourierProfile, VendorProfile
+from bestyy.restaurant_features.order.models import Order
 
 class AdminDashboardMetricsView(APIView):
     """

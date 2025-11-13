@@ -5,932 +5,423 @@ from django.utils.translation import gettext_lazy as _
 from django.db.models import Sum, Avg, ExpressionWrapper, F, DurationField
 from django.core.validators import MinValueValidator, MaxValueValidator
 from decimal import Decimal
+from typing import Optional, Dict, Any
 import uuid
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class UserManager(BaseUserManager):
-    """Define a model manager for User model with no username field."""
-
-    use_in_migrations = True
-
-    def _create_user(self, email, password, **extra_fields):
-        """Create and save a User with the given email and password."""
+    """Custom user manager for User model"""
+    
+    def create_user(self, email, password=None, **extra_fields):
+        """Create and save a regular User with the given email and password."""
         if not email:
-            raise ValueError('The given email must be set')
+            raise ValueError('The Email must be set')
         email = self.normalize_email(email)
         user = self.model(email=email, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
         return user
-
-    def create_user(self, email, password=None, **extra_fields):
-        """Create and save a regular User with the given email and password."""
-        extra_fields.setdefault('is_staff', False)
-        extra_fields.setdefault('is_superuser', False)
-        return self._create_user(email, password, **extra_fields)
-
-    def create_superuser(self, email, password, **extra_fields):
+    
+    def create_superuser(self, email, password=None, **extra_fields):
         """Create and save a SuperUser with the given email and password."""
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
         extra_fields.setdefault('is_active', True)
-
+        
         if extra_fields.get('is_staff') is not True:
             raise ValueError('Superuser must have is_staff=True.')
         if extra_fields.get('is_superuser') is not True:
             raise ValueError('Superuser must have is_superuser=True.')
-
-        return self._create_user(email, password, **extra_fields)
+        
+        return self.create_user(email, password, **extra_fields)
 
 
 class User(AbstractUser):
-    """Custom user model that supports using email instead of username"""
+    """Custom User model extending AbstractUser"""
+
     ROLE_CHOICES = [
-        ('user', 'Regular User'),
+        ('user', 'User'),
         ('vendor', 'Vendor'),
         ('courier', 'Courier'),
     ]
 
-    username = None
-    email = models.EmailField(_('email address'), unique=True)
-    role = models.CharField(max_length=10, choices=ROLE_CHOICES, default='user')  # Keep for backward compatibility
-    referral_code = models.CharField(max_length=8, unique=True, blank=True, null=True, db_index=True, help_text="Unique referral code for user")
+    SOCIAL_PROVIDERS = [
+        ('google', 'Google'),
+        ('facebook', 'Facebook'),
+        ('email', 'Email'),
+    ]
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # Store original role to detect changes
-        self._original_role = self.role
+    SOCIAL_PROVIDERS = [
+        ('google', 'Google'),
+        ('facebook', 'Facebook'),
+        ('email', 'Email'),
+    ]
+    
+    username = None  # Remove username field
+    email = models.EmailField(unique=True, verbose_name='email address')
+    
+    # Social authentication fields
+    social_provider = models.CharField(
+        choices=SOCIAL_PROVIDERS, 
+        max_length=20, 
+        null=True, 
+        blank=True
+    )
+    social_uid = models.CharField(
+        max_length=255, 
+        null=True, 
+        blank=True,
+        help_text="User's ID from the social provider"
+    )
+    is_social_signup = models.BooleanField(
+        default=False, 
+        help_text='True if user signed up via social auth'
+    )
+    
+    # Profile completion
+    profile_complete = models.BooleanField(
+        default=False, 
+        help_text='True if user has completed their profile'
+    )
+    
+    # Phone number
+    phone = models.CharField(
+        max_length=16,
+        null=True,
+        blank=True
+    )
 
-    def save(self, *args, **kwargs):
-        # Check if role is being changed
-        if self.pk and self.role != self._original_role:
-            self._role_changed = True
+    # Role field for primary role
+    role = models.CharField(
+        max_length=20,
+        choices=ROLE_CHOICES,
+        default='user',
+        help_text='Primary user role'
+    )
 
-        # Generate referral_code if missing
-        if not self.referral_code:
-            import secrets
-            import string
-            alphabet = string.ascii_uppercase + string.digits
-            unique = False
-            while not unique:
-                code = ''.join(secrets.choice(alphabet) for _ in range(8))
-                if not User.objects.filter(referral_code=code).exists():
-                    unique = True
-            self.referral_code = code
+    # Subscription fields for user featured status
+    is_featured = models.BooleanField(
+        default=False,
+        help_text='Whether this user has an active featured subscription'
+    )
+    subscription_code = models.CharField(
+        max_length=100,
+        null=True,
+        blank=True,
+        help_text='Paystack subscription code for this user'
+    )
+    subscription_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('active', 'Active'),
+            ('cancelled', 'Cancelled'),
+            ('expired', 'Expired'),
+        ],
+        null=True,
+        blank=True,
+        help_text='Current status of user subscription'
+    )
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = []
-
+    
     objects = UserManager()
-
+    
+    class Meta:
+        verbose_name = 'user'
+        verbose_name_plural = 'users'
+    
     def __str__(self):
         return self.email
+    
+    @property
+    def full_name(self):
+        """Return the user's full name"""
+        return f"{self.first_name} {self.last_name}".strip()
+    
+    def get_profile_type(self):
+        """Get the user's profile type (vendor, courier, or regular user)"""
+        if hasattr(self, 'vendor_profile'):
+            return 'vendor'
+        elif hasattr(self, 'courier_profile'):
+            return 'courier'
+        else:
+            return 'user'
 
-    def has_role(self, role):
-        """Check if user has a specific role"""
-        return self.user_roles.filter(role=role, is_active=True).exists()
-
-    def get_roles(self):
-        """Get all active roles for the user"""
-        return [user_role.role for user_role in self.user_roles.filter(is_active=True)]
-
-    def add_role(self, role):
-        """Add a new role to the user"""
-        if not self.has_role(role):
-            UserRole.objects.create(user=self, role=role)
-
-    def remove_role(self, role):
-        """Remove a role from the user"""
-        UserRole.objects.filter(user=self, role=role).update(is_active=False)
-
-# Create your models here.
-
-class UserRole(models.Model):
-    """Model to track multiple roles per user"""
-    ROLE_CHOICES = [
-        ('user', 'Regular User'),
-        ('vendor', 'Vendor'),
-        ('courier', 'Courier'),
-    ]
-
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='user_roles')
-    role = models.CharField(max_length=10, choices=ROLE_CHOICES)
-    is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        unique_together = ['user', 'role']  # Prevent duplicate roles
-        ordering = ['created_at']
-
+class UserProfile(models.Model):
+    """Extended user profile information"""
+    user = models.OneToOneField(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name='profile'
+    )
+    phone = models.CharField(max_length=16)
+    address = models.CharField(max_length=255, null=True, blank=True)
+    nick_name = models.CharField(max_length=100, null=True, blank=True)
+    language = models.CharField(max_length=50, null=True, blank=True)
+    profile_picture = models.ImageField(
+        upload_to='user_profiles/', 
+        null=True, 
+        blank=True
+    )
+    email_notifications = models.BooleanField(default=True)
+    push_notifications = models.BooleanField(default=True)
+    
     def __str__(self):
-        return f"{self.user.email} - {self.get_role_display()}"
+        return f"{self.user.email} Profile"
 
-class TransferRecipient(models.Model):
-    """Model to track transfer recipients for Paystack payouts"""
-    RECIPIENT_TYPES = [
-        ('vendor', 'Vendor'),
-        ('courier', 'Courier'),
-    ]
-
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='transfer_recipient')
-    recipient_type = models.CharField(max_length=20, choices=RECIPIENT_TYPES)
-    paystack_recipient_code = models.CharField(max_length=50, unique=True)
-    account_number = models.CharField(max_length=20)
-    account_name = models.CharField(max_length=100)
-    bank_code = models.CharField(max_length=10)
-    bank_name = models.CharField(max_length=100)
-    is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        verbose_name = 'Transfer Recipient'
-        verbose_name_plural = 'Transfer Recipients'
-
-    def __str__(self):
-        return f"{self.recipient_type.title()}: {self.account_name} - {self.user.email}"
 
 class VendorProfile(models.Model):
-    """Profile for vendor users, including business and delivery info."""
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='vendor_profile')
-    phone = models.CharField(max_length=16)
-    business_name = models.CharField(max_length=255)
-    business_category = models.CharField(max_length=100) # Allows any text, including 'Other'
-    # subscription_plan = models.ForeignKey(
-    #     'SubscriptionPlan',
-    #     on_delete=models.SET_NULL,
-    #     null=True,
-    #     blank=True,
-    #     help_text="Vendor's current subscription plan"
-    # )
-    cac_number = models.CharField(max_length=100, blank=True, null=True) # Optional
-    business_description = models.TextField(blank=True, null=True)
-    logo = models.ImageField(upload_to='vendor_logos/', blank=True, null=True) # Optional
-    business_address = models.CharField(max_length=255)
-    delivery_radius = models.CharField(max_length=50)
-    service_areas = models.CharField(max_length=255)  # Comma-separated list
-    opening_hours = models.TimeField(blank=True, null=True)
-    closing_hours = models.TimeField(blank=True, null=True)
-    offers_delivery = models.BooleanField(default=False)
-
-    # Verification fields
-    VERIFICATION_STATUS = [
+    """Vendor business profile"""
+    VERIFICATION_STATUS_CHOICES = [
         ('pending', 'Pending'),
         ('approved', 'Approved'),
         ('rejected', 'Rejected'),
     ]
+    
+    user = models.OneToOneField(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name='vendor_profile'
+    )
+    phone = models.CharField(max_length=16)
+    business_name = models.CharField(max_length=255)
+    business_category = models.CharField(max_length=100)
+    cac_number = models.CharField(max_length=100, null=True, blank=True)
+    business_description = models.TextField(null=True, blank=True)
+    logo = models.ImageField(
+        upload_to='vendor_logos/',
+        null=True,
+        blank=True
+    )
+    cover_image = models.ImageField(
+        upload_to='vendor_covers/',
+        null=True,
+        blank=True,
+        help_text='Vendor cover photo for profile display'
+    )
+    business_address = models.CharField(max_length=255)
+    delivery_radius = models.CharField(max_length=50)
+    service_areas = models.CharField(max_length=255)
+    opening_hours = models.TimeField(null=True, blank=True)
+    closing_hours = models.TimeField(null=True, blank=True)
+    offers_delivery = models.BooleanField(default=False)
     verification_status = models.CharField(
-        max_length=10,
-        choices=VERIFICATION_STATUS,
-        default='pending',
-        help_text="Current verification status of the vendor"
+        max_length=10, 
+        choices=VERIFICATION_STATUS_CHOICES, 
+        default='pending'
     )
     verification_notes = models.TextField(
+        null=True, 
         blank=True,
-        null=True,
-        help_text="Notes from admin regarding verification status"
+        help_text='Notes from admin regarding verification status'
     )
     verification_date = models.DateTimeField(
-        null=True,
+        null=True, 
         blank=True,
-        help_text="When the verification status was last updated"
+        help_text='When the verification status was last updated'
     )
-
-    # Account suspension fields
-    is_suspended = models.BooleanField(
-        default=False,
-        help_text="Whether the vendor account is currently suspended"
-    )
-    suspension_reason = models.TextField(
-        blank=True,
-        null=True,
-        help_text="Reason for account suspension"
-    )
-    suspension_date = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="When the account was suspended"
-    )
-    suspension_duration_days = models.IntegerField(
-        null=True,
-        blank=True,
-        help_text="Duration of suspension in days (null for indefinite)"
-    )
-    activation_date = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="When the account was last activated"
-    )
-
-    # Featured vendor fields
-    is_featured = models.BooleanField(
-        default=False,
-        help_text="Whether this vendor is featured (paid promotion)"
-    )
-    featured_priority = models.IntegerField(
-        default=0,
-        help_text="Priority level for featured vendors (higher = more prominent)"
-    )
-    featured_expiry = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="When the featured status expires"
-    )
-
-    # Menu freshness tracking
-    last_menu_update = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="When the vendor last updated their menu items"
-    )
-
-    # Timestamps
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    # Bank account information for payouts
-    bank_name = models.CharField(
-        max_length=100,
-        blank=True,
-        null=True,
-        help_text="Bank name for payouts"
-    )
-    account_number = models.CharField(
-        max_length=20,
-        blank=True,
-        null=True,
-        help_text="Bank account number for payouts"
-    )
-    account_name = models.CharField(
-        max_length=100,
-        blank=True,
-        null=True,
-        help_text="Bank account name for payouts"
-    )
-    bank_code = models.CharField(
-        max_length=10,
-        blank=True,
-        null=True,
-        help_text="Bank code for payouts"
-    )
-    bank_account_verified = models.BooleanField(
-        default=False,
-        help_text="Whether bank account has been verified"
-    )
-    bank_account_verified_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="When bank account was verified"
-    )
-
-    # Email and phone verification
-    email_verified = models.BooleanField(
-        default=False,
-        help_text="Whether email has been verified"
-    )
-    email_verified_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="When email was verified"
-    )
-    email_verification_token = models.CharField(
-        max_length=100,
-        blank=True,
-        null=True,
-        help_text="Email verification token"
-    )
-    phone_verified = models.BooleanField(
-        default=False,
-        help_text="Whether WhatsApp phone has been verified"
-    )
-    phone_verified_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="When phone was verified"
-    )
-    phone_verification_code = models.CharField(
-        max_length=10,
-        blank=True,
-        null=True,
-        help_text="Phone verification code"
-    )
-    phone_verification_attempts = models.IntegerField(
-        default=0,
-        help_text="Number of phone verification attempts"
-    )
-
-    # Document uploads for verification
     cac_document = models.FileField(
-        upload_to='vendor_documents/cac/',
+        upload_to='vendor_documents/cac/', 
+        null=True, 
         blank=True,
-        null=True,
-        help_text="Upload CAC document (PDF, JPG, PNG)"
+        help_text='Upload CAC document (PDF, JPG, PNG)'
     )
     valid_id = models.FileField(
-        upload_to='vendor_documents/ids/',
+        upload_to='vendor_documents/ids/', 
+        null=True, 
         blank=True,
-        null=True,
         help_text="Upload a valid ID (Driver's License, NIN, Voter's Card)"
     )
     proof_of_address = models.FileField(
         upload_to='vendor_documents/address_proofs/',
-        blank=True,
         null=True,
-        help_text="Upload proof of business address"
+        blank=True,
+        help_text='Upload proof of business address'
     )
-
-    class Meta:
-        ordering = ['-created_at']
-        verbose_name = 'Vendor Profile'
-        verbose_name_plural = 'Vendor Profiles'
-        permissions = [
-            ('can_verify_vendor', 'Can verify vendor accounts'),
-            ('can_manage_vendors', 'Can manage all vendors'),
-        ]
-
-    def __str__(self):
-        return self.business_name
-
-class CourierProfile(models.Model):
-    """Profile for courier users, including delivery and verification info."""
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='courier_profile')
-    phone = models.CharField(max_length=16)
-    service_areas = models.CharField(max_length=255)  # Comma-separated list
-    delivery_radius = models.CharField(max_length=50)
-    opening_hours = models.TimeField()
-    closing_hours = models.TimeField()
-    has_bike = models.BooleanField(default=False)
-    verification_preference = models.CharField(
-        max_length=50,
-        choices=[('NIN', 'NIN'), ('DL', "Driver's License"), ('VC', "Voter's Card")]
-    )
-    nin_number = models.CharField(max_length=20, blank=True, null=True)
-    id_upload = models.ImageField(upload_to='courier_ids/', blank=True, null=True)
-    profile_photo = models.ImageField(upload_to='courier_photos/', blank=True, null=True)
-    agreed_to_terms = models.BooleanField(default=False)
-    is_active = models.BooleanField(default=True, help_text="Whether the courier is currently active and can receive deliveries")
-
-    # Account suspension fields
+    # Suspension fields
     is_suspended = models.BooleanField(
         default=False,
-        help_text="Whether the courier account is currently suspended"
+        help_text='Whether the vendor account is currently suspended'
     )
     suspension_reason = models.TextField(
-        blank=True,
         null=True,
-        help_text="Reason for account suspension"
+        blank=True,
+        help_text='Reason for account suspension'
     )
     suspension_date = models.DateTimeField(
         null=True,
         blank=True,
-        help_text="When the account was suspended"
+        help_text='When the account was suspended'
     )
     suspension_duration_days = models.IntegerField(
         null=True,
         blank=True,
-        help_text="Duration of suspension in days (null for indefinite)"
+        help_text='Duration of suspension in days (null for indefinite)'
     )
     activation_date = models.DateTimeField(
         null=True,
         blank=True,
-        help_text="When the account was last activated"
+        help_text='When the account was last activated'
     )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = 'Vendor Profile'
+        verbose_name_plural = 'Vendor Profiles'
+        ordering = ['-created_at']
+        permissions = [
+            ('can_verify_vendor', 'Can verify vendor accounts'),
+            ('can_manage_vendors', 'Can manage all vendors')
+        ]
+    
+    def __str__(self):
+        return f"{self.business_name}"
 
+
+class CourierProfile(models.Model):
+    """Courier delivery profile"""
+    VERIFICATION_STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+    ]
+    
     VEHICLE_TYPE_CHOICES = [
         ('bike', 'Bike'),
         ('car', 'Car'),
         ('van', 'Van'),
         ('other', 'Other'),
     ]
-    vehicle_type = models.CharField(max_length=20, choices=VEHICLE_TYPE_CHOICES, blank=True, null=True)
-
-    VERIFICATION_STATUS = [
-        ('pending', 'Pending'),
-        ('approved', 'Approved'),
-        ('rejected', 'Rejected'),
+    
+    VERIFICATION_PREFERENCE_CHOICES = [
+        ('NIN', 'NIN'),
+        ('DL', "Driver's License"),
+        ('VC', "Voter's Card"),
     ]
-    verification_status = models.CharField(max_length=10, choices=VERIFICATION_STATUS, default='pending')
-
-    # Bank account information for payouts
-    bank_name = models.CharField(
-        max_length=100,
-        blank=True,
-        null=True,
-        help_text="Bank name for payouts"
+    
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='courier_profile'
     )
-    account_number = models.CharField(
+    phone = models.CharField(max_length=16)
+    service_areas = models.CharField(max_length=255)
+    delivery_radius = models.CharField(max_length=50)
+
+    # Location fields for nearby courier discovery
+    latitude = models.DecimalField(
+        max_digits=9,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        help_text='Current latitude of the courier'
+    )
+    longitude = models.DecimalField(
+        max_digits=9,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        help_text='Current longitude of the courier'
+    )
+    last_location_update = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='When the location was last updated'
+    )
+    opening_hours = models.TimeField()
+    closing_hours = models.TimeField()
+    has_bike = models.BooleanField(default=False)
+    verification_preference = models.CharField(
+        max_length=50, 
+        choices=VERIFICATION_PREFERENCE_CHOICES
+    )
+    nin_number = models.CharField(max_length=20, null=True, blank=True)
+    id_upload = models.ImageField(
+        upload_to='courier_ids/', 
+        null=True, 
+        blank=True
+    )
+    profile_photo = models.ImageField(
+        upload_to='courier_photos/', 
+        null=True, 
+        blank=True
+    )
+    agreed_to_terms = models.BooleanField(default=False)
+    is_active = models.BooleanField(
+        default=True,
+        help_text='Whether the courier is currently active and can receive deliveries'
+    )
+    vehicle_type = models.CharField(
         max_length=20,
-        blank=True,
+        choices=VEHICLE_TYPE_CHOICES,
         null=True,
-        help_text="Bank account number for payouts"
+        blank=True
     )
-    account_name = models.CharField(
-        max_length=100,
-        blank=True,
-        null=True,
-        help_text="Bank account name for payouts"
-    )
-    bank_code = models.CharField(
+    verification_status = models.CharField(
         max_length=10,
-        blank=True,
-        null=True,
-        help_text="Bank code for payouts"
+        choices=VERIFICATION_STATUS_CHOICES,
+        default='pending'
     )
-    bank_account_verified = models.BooleanField(
+    # Suspension fields
+    is_suspended = models.BooleanField(
         default=False,
-        help_text="Whether bank account has been verified"
+        help_text='Whether the courier account is currently suspended'
     )
-    bank_account_verified_at = models.DateTimeField(
+    suspension_reason = models.TextField(
         null=True,
         blank=True,
-        help_text="When bank account was verified"
+        help_text='Reason for account suspension'
     )
-
-    # Email and phone verification
-    email_verified = models.BooleanField(
-        default=False,
-        help_text="Whether email has been verified"
-    )
-    email_verified_at = models.DateTimeField(
+    suspension_date = models.DateTimeField(
         null=True,
         blank=True,
-        help_text="When email was verified"
+        help_text='When the account was suspended'
     )
-    email_verification_token = models.CharField(
-        max_length=100,
-        blank=True,
-        null=True,
-        help_text="Email verification token"
-    )
-    phone_verified = models.BooleanField(
-        default=False,
-        help_text="Whether WhatsApp phone has been verified"
-    )
-    phone_verified_at = models.DateTimeField(
+    suspension_duration_days = models.IntegerField(
         null=True,
         blank=True,
-        help_text="When phone was verified"
+        help_text='Duration of suspension in days (null for indefinite)'
     )
-    phone_verification_code = models.CharField(
-        max_length=10,
-        blank=True,
+    activation_date = models.DateTimeField(
         null=True,
-        help_text="Phone verification code"
+        blank=True,
+        help_text='When the account was last activated'
     )
-    phone_verification_attempts = models.IntegerField(
-        default=0,
-        help_text="Number of phone verification attempts"
-    )
-
-    # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-
+    
     class Meta:
-        ordering = ['-created_at']
         verbose_name = 'Courier Profile'
         verbose_name_plural = 'Courier Profiles'
-
-    def __str__(self):
-        return self.user.get_full_name() or self.user.email
-
-class UserProfile(models.Model):
-    """Profile for regular users, including phone number and profile details."""
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
-    phone = models.CharField(max_length=16)
-    address = models.CharField(max_length=255, blank=True, null=True)
-    nick_name = models.CharField(max_length=100, blank=True, null=True)
-    language = models.CharField(max_length=50, blank=True, null=True)
-    profile_picture = models.ImageField(upload_to='user_profiles/', blank=True, null=True)
-    email_notifications = models.BooleanField(default=True)
-    push_notifications = models.BooleanField(default=True)
-    created_at = models.DateTimeField(default=timezone.now)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
         ordering = ['-created_at']
-
+    
     def __str__(self):
-        return self.user.get_full_name() or self.user.email
+        return f"{self.user.email} - Courier"
 
-class MenuItem(models.Model):
-    """Menu item for a vendor, linked to VendorProfile."""
-    vendor = models.ForeignKey(VendorProfile, on_delete=models.CASCADE, related_name='menu_items')
-    dish_name = models.CharField(max_length=255)
-    item_description = models.TextField(blank=True, null=True)  # New field for item description
-    price = models.DecimalField(max_digits=10, decimal_places=2)
-    category = models.CharField(max_length=100)
-    image = models.ImageField(upload_to='menu_items/', blank=True, null=True)
-    video = models.FileField(upload_to='menu_videos/', blank=True, null=True, help_text="30-second promotional video for the menu item")
-    available_now = models.BooleanField(default=True)
-    quantity = models.PositiveIntegerField(default=0)  # New field for quantity
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ['-created_at']
-
-    def __str__(self):
-        return f"{self.dish_name} ({self.vendor.business_name})"
-
-class Order(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='orders')
-    vendor = models.ForeignKey(VendorProfile, on_delete=models.CASCADE, related_name='orders')
-    courier = models.ForeignKey('CourierProfile', on_delete=models.SET_NULL, null=True, blank=True,
-                               related_name='deliveries')
-    items = models.ManyToManyField(MenuItem)
-    total_price = models.DecimalField(max_digits=10, decimal_places=2)
-    order_name = models.CharField(max_length=255, blank=True, null=True)  # Display name for the order
-    delivery_address = models.TextField()  # Where the order was delivered
-    pickup_address = models.TextField(blank=True, null=True)  # Where to pick up the order from
-    special_instructions = models.TextField(blank=True, null=True, help_text="Special instructions from the user")
-
-    # Payment and delivery tracking
-    payment_confirmed = models.BooleanField(default=False)  # Payment has been confirmed by backend
-    payment_confirmed_at = models.DateTimeField(null=True, blank=True)  # When payment was confirmed
-    user_receipt_confirmed = models.BooleanField(default=False)  # User has confirmed they received the order
-    user_receipt_confirmed_at = models.DateTimeField(null=True, blank=True)  # When user confirmed receipt
-
-    # Delivery metrics
-    distance_km = models.FloatField(null=True, blank=True, help_text="Estimated distance in kilometers")
-    delivery_time_minutes = models.IntegerField(null=True, blank=True,
-                                               help_text="Total delivery time in minutes")
-    commission = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'),
-                                   help_text="Commission earned by the courier")
-
-    # Location coordinates for distance calculation
-    pickup_latitude = models.FloatField(null=True, blank=True, help_text="Pickup location latitude")
-    pickup_longitude = models.FloatField(null=True, blank=True, help_text="Pickup location longitude")
-    delivery_latitude = models.FloatField(null=True, blank=True, help_text="Delivery location latitude")
-    delivery_longitude = models.FloatField(null=True, blank=True, help_text="Delivery location longitude")
-
-    # Delivery pricing
-    delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'),
-                                     help_text="Calculated delivery fee based on distance")
-
-    # Conditional payment fields
-    pickup_code = models.CharField(max_length=6, blank=True, null=True, help_text="Code for vendor to confirm pickup")
-    pickup_code_generated_at = models.DateTimeField(null=True, blank=True)
-    pickup_code_verified = models.BooleanField(default=False)
-    pickup_code_verified_at = models.DateTimeField(null=True, blank=True)
-
-    vendor_paid = models.BooleanField(default=False, help_text="Whether vendor has been paid")
-    courier_paid = models.BooleanField(default=False, help_text="Whether courier has been paid")
-    vendor_payout_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'),
-                                             help_text="Amount paid to vendor")
-    courier_payout_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'),
-                                               help_text="Amount paid to courier")
-    platform_commission = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'),
-                                            help_text="Platform commission retained")
-
-    # Delivery timing
-    order_placed_at = models.DateTimeField(default=timezone.now)  # When order was placed
-    order_ready_at = models.DateTimeField(null=True, blank=True)  # When order was ready for pickup/delivery
-    out_for_delivery_at = models.DateTimeField(null=True, blank=True)  # When order went out for delivery
-    delivered_at = models.DateTimeField(null=True, blank=True)  # When order was actually delivered
-
-    # Legacy fields for backward compatibility
-    delivery_date = models.DateTimeField(null=True, blank=True)  # When it was delivered (legacy)
-
-    status = models.CharField(max_length=20, choices=[
-        ('awaiting', 'Awaiting'),  # Order created, waiting for user confirmation and special instructions
-        ('pending', 'Pending'),  # Order placed, waiting for payment confirmation
-        ('payment_confirmed', 'Payment Confirmed'),  # Payment confirmed, waiting for vendor to process
-        ('processing', 'Processing'),  # Vendor is preparing the order
-        ('ready', 'Ready'),  # Order is ready for pickup/delivery
-        ('out_for_delivery', 'Out For Delivery'),  # Order is being delivered
-        ('delivered', 'Delivered'),  # Order delivered, waiting for user confirmation
-        ('completed', 'Completed'),  # User confirmed receipt
-        ('cancelled', 'Cancelled'),
-        ('rejected', 'Rejected')
-    ], default='awaiting')
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return f"Order #{self.id} by {self.user.email}"
-
-    def save(self, *args, **kwargs):
-        # Auto-generate order name if not provided
-        if not self.order_name:
-            if self.pk:  # Only access items if the order is already saved
-                item_names = [item.dish_name for item in self.items.all()]
-                if item_names:
-                    self.order_name = f"{', '.join(item_names[:2])}{'...' if len(item_names) > 2 else ''}"
-                else:
-                    self.order_name = f"Order from {self.vendor.business_name}"
-            else:
-                self.order_name = f"Order from {self.vendor.business_name}"
-        super().save(*args, **kwargs)
-
-    def confirm_payment(self):
-        """Confirm that payment has been received and verified"""
-        from django.utils import timezone
-        self.payment_confirmed = True
-        self.payment_confirmed_at = timezone.now()
-        self.status = 'payment_confirmed'
-        self.save()
-
-    def confirm_user_receipt(self):
-        """User confirms they have received the order"""
-        from django.utils import timezone
-        self.user_receipt_confirmed = True
-        self.user_receipt_confirmed_at = timezone.now()
-        self.status = 'completed'
-        self.save()
-
-    def mark_as_ready(self):
-        """Mark order as ready for pickup/delivery"""
-        from django.utils import timezone
-        self.order_ready_at = timezone.now()
-        self.status = 'ready'
-        self.save()
-
-    def mark_out_for_delivery(self):
-        """Mark order as out for delivery"""
-        from django.utils import timezone
-        self.out_for_delivery_at = timezone.now()
-        self.status = 'out_for_delivery'
-        self.save()
-
-    def mark_as_delivered(self):
-        """Mark order as delivered (waiting for user confirmation)"""
-        from django.utils import timezone
-        self.delivered_at = timezone.now()
-        self.delivery_date = timezone.now()  # Legacy field
-        self.status = 'delivered'
-        self.save()
-
-    @property
-    def is_pending_confirmation(self):
-        """Check if order is pending user confirmation (payment confirmed but user hasn't confirmed receipt)"""
-        return self.payment_confirmed and not self.user_receipt_confirmed and self.status in ['delivered', 'ready']
-
-    @property
-    def delivery_time_minutes(self):
-        """Calculate total delivery time in minutes"""
-        if self.delivered_at and self.order_placed_at:
-            delta = self.delivered_at - self.order_placed_at
-            return int(delta.total_seconds() / 60)
-        return None
-
-    @property
-    def time_since_delivered(self):
-        """Calculate time since order was delivered (for pending confirmation)"""
-        from django.utils import timezone
-        if self.delivered_at:
-            delta = timezone.now() - self.delivered_at
-            return int(delta.total_seconds() / 60)  # minutes
-        return None
-
-    def generate_pickup_code(self):
-        """Generate a 6-digit pickup code for vendor confirmation"""
-        import random
-        from django.utils import timezone
-
-        if not self.pickup_code:
-            self.pickup_code = f"{random.randint(100000, 999999)}"
-            self.pickup_code_generated_at = timezone.now()
-            self.save()
-
-    def generate_delivery_otp(self):
-        """Generate a 6-digit delivery OTP for customer confirmation"""
-        import random
-        from django.utils import timezone
-
-        if not self.delivery_otp:
-            self.delivery_otp = f"{random.randint(100000, 999999)}"
-            self.delivery_otp_generated_at = timezone.now()
-            self.save()
-
-    def verify_pickup_code(self, code):
-        """Verify pickup code and trigger vendor payout"""
-        from django.utils import timezone
-
-        if self.pickup_code == code and not self.pickup_code_verified:
-            self.pickup_code_verified = True
-            self.pickup_code_verified_at = timezone.now()
-            self.save()
-            return True
-        return False
-
-    def verify_delivery_otp(self, otp):
-        """Verify delivery OTP and trigger courier payout"""
-        from django.utils import timezone
-
-        if self.delivery_otp == otp and not self.delivery_otp_verified:
-            self.delivery_otp_verified = True
-            self.delivery_otp_verified_at = timezone.now()
-            self.save()
-            return True
-        return False
-
-    def calculate_payouts(self):
-        """Calculate vendor, courier, and platform amounts"""
-        from .models import SystemSettings
-
-        # Get platform commission rate from settings (default 10%)
-        platform_commission_rate = SystemSettings.get_setting('platform_commission_rate', Decimal('0.10'))
-
-        # Get default fixed amounts
-        default_vendor_fixed_amount = SystemSettings.get_setting('default_vendor_fixed_amount', Decimal('0.00'))  # ₦0 default
-        default_courier_fixed_amount = SystemSettings.get_setting('default_courier_fixed_amount', Decimal('500.00'))  # ₦500 default
-
-        # Check if vendor has custom fixed amount in subaccount
-        vendor_amount = default_vendor_fixed_amount
-        try:
-            if self.vendor.user.subaccount and self.vendor.user.subaccount.percentage_charge:
-                # Use percentage_charge field to store fixed amount for vendors
-                vendor_amount = self.vendor.user.subaccount.percentage_charge
-        except:
-            # Fallback to percentage calculation if no fixed amount
-            vendor_amount = self.total_price * (Decimal('1.0') - platform_commission_rate)
-
-        # Check if courier has custom fixed amount in subaccount
-        courier_amount = default_courier_fixed_amount
-        try:
-            if self.courier and self.courier.user.subaccount and self.courier.user.subaccount.percentage_charge:
-                # Use percentage_charge field to store fixed amount for couriers
-                courier_amount = self.courier.user.subaccount.percentage_charge
-        except:
-            # Fallback to delivery fee
-            courier_amount = getattr(self, 'delivery_fee', Decimal('500.00'))
-
-        # Platform commission (fixed amount or percentage)
-        platform_commission = self.total_price * platform_commission_rate
-
-        # Ensure vendor gets food amount minus platform commission if using percentage
-        if vendor_amount == Decimal('0.00'):
-            vendor_amount = self.total_price - platform_commission
-
-        return {
-            'vendor_amount': vendor_amount,
-            'courier_amount': courier_amount,
-            'platform_commission': platform_commission
-        }
-
-    def calculate_distance_and_fee(self, origin_address=None, destination_address=None):
-        """
-        Calculate distance and delivery fee using Google Maps with configurable pricing
-
-        Args:
-            origin_address: Pickup address (if not provided, uses vendor address)
-            destination_address: Delivery address (if not provided, uses delivery_address)
-
-        Returns:
-            Dict with distance and pricing info or None if failed
-        """
-        from user.services.google_maps_service import GoogleMapsService
-        from .models import SystemSettings
-
-        # Use provided addresses or fall back to stored addresses
-        origin = origin_address or self.vendor.business_address
-        destination = destination_address or self.delivery_address
-
-        if not origin or not destination:
-            return None
-
-        maps_service = GoogleMapsService()
-        result = maps_service.get_distance_and_price(origin, destination)
-
-        if result:
-            # Update order fields with calculated data
-            self.distance_km = result['distance_km']
-
-            # Calculate delivery fee using configurable pricing
-            delivery_fee = self.calculate_delivery_fee(result['distance_km'])
-            self.delivery_fee = delivery_fee
-
-            # Store coordinates if available (would need geocoding)
-            # For now, just store the calculated values
-            self.save()
-
-        return result
-
-    def calculate_delivery_fee(self, distance_km):
-        """
-        Calculate delivery fee based on distance using configurable pricing
-
-        Args:
-            distance_km: Distance in kilometers
-
-        Returns:
-            Decimal: Calculated delivery fee
-        """
-        from .models import SystemSettings
-
-        # Get pricing settings
-        base_fee = SystemSettings.get_setting('delivery_base_fee', Decimal('1500.00'))  # ₦1,500 base
-        rate_per_km = SystemSettings.get_setting('delivery_rate_per_km', Decimal('300.00'))  # ₦300 per km
-        max_distance_for_base = SystemSettings.get_setting('delivery_max_distance_for_base', Decimal('5.0'))  # 5km
-
-        # Convert distance to Decimal for calculations
-        distance = Decimal(str(distance_km))
-
-        if distance <= max_distance_for_base:
-            # Within base distance - charge base fee
-            return base_fee
-        else:
-            # Beyond base distance - add per-km rate
-            extra_distance = distance - max_distance_for_base
-            extra_fee = extra_distance * rate_per_km
-            return base_fee + extra_fee
-
-    def trigger_vendor_payout(self):
-        """Trigger payout to vendor after pickup confirmation (uses Paystack transfer, not split)."""
-        from user.services.paystack_service import PaystackService
-        from user.models import Transfer
-
-        if not self.pickup_code_verified or self.vendor_paid:
-            return False
-
-        payouts = self.calculate_payouts()
-        vendor_amount = payouts['vendor_amount']
-
-        paystack_service = PaystackService()
-
-        # Create transfer only after OTP confirmation and if not yet paid
-        try:
-            recipient = self.vendor.user.transfer_recipient
-        except Exception:
-            return False
-
-        transfer = Transfer.objects.create(
-            order=self,
-            recipient=recipient,
-            amount=vendor_amount,
-            paystack_reference=f'vendor_payout_{self.id}_{int(timezone.now().timestamp())}',
-            reason=f'Payment for order #{self.id} - {self.order_name}'
-        )
-
-        result = paystack_service.initiate_transfer(
-            amount=vendor_amount,
-            recipient_code=recipient.paystack_recipient_code,
-            reference=transfer.paystack_reference,
-            reason=transfer.reason
-        )
-
-        if result['success']:
-            transfer.paystack_transfer_code = result['transfer_code']
-            transfer.save()
-            self.vendor_paid = True
-            self.vendor_payout_amount = vendor_amount
-            self.save()
-            return True
-        return False
-
-    def trigger_courier_payout(self):
-        """Trigger payout to courier after delivery OTP confirmation (uses Paystack transfer, not split)."""
-        from user.services.paystack_service import PaystackService
-        from user.models import Transfer
-
-        if not self.delivery_otp_verified or self.courier_paid:
-            return False
-
-        payouts = self.calculate_payouts()
-        courier_amount = payouts['courier_amount']
-
-        paystack_service = PaystackService()
-
-        # Create transfer only after OTP confirmation and if not yet paid
-        try:
-            recipient = self.courier.user.transfer_recipient
-        except Exception:
-            return False
-
-        transfer = Transfer.objects.create(
-            order=self,
-            recipient=recipient,
-            amount=courier_amount,
-            paystack_reference=f'courier_payout_{self.id}_{int(timezone.now().timestamp())}',
-            reason=f'Delivery fee for order #{self.id} - {self.order_name}'
-        )
-
-        result = paystack_service.initiate_transfer(
-            amount=courier_amount,
-            recipient_code=recipient.paystack_recipient_code,
-            reference=transfer.paystack_reference,
-            reason=transfer.reason
-        )
-
-        if result['success']:
-            transfer.paystack_transfer_code = result['transfer_code']
-            transfer.save()
-            self.courier_paid = True
-            self.courier_payout_amount = courier_amount
-            self.platform_commission = payouts['platform_commission']
-            self.save()
-            return True
-        return False
 
 class Address(models.Model):
-    ADDRESS_TYPES = [
+    """User address information"""
+    ADDRESS_TYPE_CHOICES = [
         ('home', 'Home'),
         ('work', 'Work'),
         ('other', 'Other'),
     ]
-
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='addresses')
-    address_type = models.CharField(max_length=10, choices=ADDRESS_TYPES, default='home')
+    
+    user = models.ForeignKey(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name='addresses'
+    )
+    address_type = models.CharField(
+        max_length=10, 
+        choices=ADDRESS_TYPE_CHOICES, 
+        default='home'
+    )
     full_name = models.CharField(max_length=255)
     phone_number = models.CharField(max_length=16)
     street_address = models.CharField(max_length=255)
@@ -940,242 +431,717 @@ class Address(models.Model):
     is_default = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"{self.full_name} - {self.city}"
+
+
+class TransferRecipient(models.Model):
+    """Transfer recipient information for payouts"""
+    RECIPIENT_TYPE_CHOICES = [
+        ('vendor', 'Vendor'),
+        ('courier', 'Courier'),
+    ]
+    
+    user = models.ForeignKey(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name='transfer_recipients'
+    )
+    recipient_type = models.CharField(
+        max_length=20, 
+        choices=RECIPIENT_TYPE_CHOICES
+    )
+    account_name = models.CharField(max_length=255)
+    account_number = models.CharField(max_length=20)
+    bank_name = models.CharField(max_length=100)
+    bank_code = models.CharField(max_length=10)
+    paystack_recipient_code = models.CharField(
+        max_length=100, 
+        null=True, 
+        blank=True
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"{self.account_name} - {self.bank_name}"
+
+
+class DedicatedVirtualAccount(models.Model):
+    """Dedicated Virtual Account for Paystack payments"""
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='dedicated_account'
+    )
+    paystack_customer_id = models.CharField(max_length=100, null=True, blank=True)
+    paystack_dedicated_account_id = models.CharField(max_length=100, null=True, blank=True)
+    bank_name = models.CharField(max_length=100)
+    bank_slug = models.CharField(max_length=100, null=True, blank=True)
+    account_number = models.CharField(max_length=20)
+    account_name = models.CharField(max_length=255)
+    is_active = models.BooleanField(default=True)
+    is_assigned = models.BooleanField(default=True)
+    assignment_type = models.CharField(max_length=50, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"{self.address_type.title()} address for {self.user.email}"
-
-    def save(self, *args, **kwargs):
-        # If this address is set as default, unset other default addresses for this user
-        if self.is_default:
-            Address.objects.filter(user=self.user, is_default=True).exclude(pk=self.pk).update(is_default=False)
-        super().save(*args, **kwargs)
-
-class Favorite(models.Model):
-    FAVORITE_TYPES = [
-        ('food', 'Food Item'),
-        ('venue', 'Venue/Vendor'),
-    ]
-
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='favorites')
-    favorite_type = models.CharField(max_length=10, choices=FAVORITE_TYPES)
-    food_item = models.ForeignKey(MenuItem, on_delete=models.CASCADE, null=True, blank=True, related_name='favorited_by')
-    vendor = models.ForeignKey(VendorProfile, on_delete=models.CASCADE, null=True, blank=True, related_name='favorited_by')
-    created_at = models.DateTimeField(auto_now_add=True)
+        return f"{self.account_name} - {self.account_number}"
 
     class Meta:
-        unique_together = [
-            ('user', 'food_item'),  # User can only favorite a food item once
-            ('user', 'vendor'),     # User can only favorite a vendor once
+        verbose_name = 'Dedicated Virtual Account'
+        verbose_name_plural = 'Dedicated Virtual Accounts'
+
+
+class Transfer(models.Model):
+    """Money transfer records"""
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('reversed', 'Reversed'),
+    ]
+
+    order = models.ForeignKey(
+        'order.Order',
+        on_delete=models.CASCADE,
+        related_name='transfers',
+        null=True,
+        blank=True
+    )
+    recipient = models.ForeignKey(
+        TransferRecipient,
+        on_delete=models.CASCADE,
+        related_name='transfers'
+    )
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending'
+    )
+    paystack_reference = models.CharField(
+        max_length=100,
+        null=True,
+        blank=True
+    )
+    paystack_transfer_code = models.CharField(
+        max_length=100,
+        null=True,
+        blank=True
+    )
+    initiated_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Transfer {self.amount} to {self.recipient.account_name}"
+
+
+class Cart(models.Model):
+    """
+    Session-based cart model for storing user shopping cart items.
+    Supports multiple vendors and session persistence.
+    """
+    CART_STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('abandoned', 'Abandoned'),
+        ('converted', 'Converted to Order'),
+    ]
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='carts',
+        null=True,
+        blank=True,
+        help_text='User who owns the cart (null for anonymous carts)'
+    )
+    session_key = models.CharField(
+        max_length=40,
+        null=True,
+        blank=True,
+        help_text='Django session key for anonymous users'
+    )
+    vendor = models.ForeignKey(
+        VendorProfile,
+        on_delete=models.CASCADE,
+        related_name='carts',
+        help_text='Vendor this cart is associated with'
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=CART_STATUS_CHOICES,
+        default='active',
+        help_text='Current status of the cart'
+    )
+    total_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+        help_text='Total price of all items in cart'
+    )
+    item_count = models.PositiveIntegerField(
+        default=0,
+        help_text='Total number of items in cart'
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text='Whether this cart is currently active'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Cart'
+        verbose_name_plural = 'Carts'
+        ordering = ['-updated_at']
+        indexes = [
+            models.Index(fields=['user', 'vendor', 'is_active']),
+            models.Index(fields=['session_key', 'vendor', 'is_active']),
+            models.Index(fields=['status', 'updated_at']),
         ]
 
     def __str__(self):
-        if self.favorite_type == 'food' and self.food_item:
-            return f"{self.user.email} likes {self.food_item.dish_name}"
-        elif self.favorite_type == 'venue' and self.vendor:
-            return f"{self.user.email} likes {self.vendor.business_name}"
-        return f"{self.user.email}'s favorite"
+        owner = self.user.email if self.user else f"Session: {self.session_key[:8]}..."
+        return f"{owner} - {self.vendor.business_name} ({self.item_count} items)"
 
-    def clean(self):
-        from django.core.exceptions import ValidationError
-        if self.favorite_type == 'food' and not self.food_item:
-            raise ValidationError('Food item is required for food favorites.')
-        elif self.favorite_type == 'venue' and not self.vendor:
-            raise ValidationError('Vendor is required for venue favorites.')
-        if self.food_item and self.vendor:
-            raise ValidationError('Cannot have both food item and vendor in the same favorite.')
+    def add_item(self, menu_item, quantity=1, variants=None, special_instructions=''):
+        """
+        Add an item to the cart or update quantity if it already exists.
+        """
+        from decimal import Decimal
 
-class SavedCard(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='saved_cards')
-    card_type = models.CharField(max_length=20)
-    last_four_digits = models.CharField(max_length=4)
-    expiry_month = models.CharField(max_length=2)
-    expiry_year = models.CharField(max_length=4)
-    paystack_authorization_code = models.CharField(max_length=100, unique=True)
-    is_default = models.BooleanField(default=False)
-    created_at = models.DateTimeField(auto_now_add=True)
+        # Check if item already exists in cart
+        cart_item, created = CartItem.objects.get_or_create(
+            cart=self,
+            menu_item=menu_item,
+            defaults={
+                'quantity': 0,
+                'base_price': menu_item.price,
+                'variants': variants or {},
+                'special_instructions': special_instructions,
+            }
+        )
 
-    def __str__(self):
-        return f"{self.card_type} ending in {self.last_four_digits}"
+        # Update quantity and total price
+        old_quantity = cart_item.quantity
+        cart_item.quantity += quantity
+        cart_item.variants = variants or cart_item.variants
+        cart_item.special_instructions = special_instructions or cart_item.special_instructions
+        cart_item.total_price = Decimal(str(cart_item.base_price)) * cart_item.quantity
+        cart_item.save()
 
-    def save(self, *args, **kwargs):
-        # If this card is set as default, unset other default cards for this user
-        if self.is_default:
-            SavedCard.objects.filter(user=self.user, is_default=True).exclude(pk=self.pk).update(is_default=False)
-        super().save(*args, **kwargs)
+        # Update cart totals
+        self.total_price += (cart_item.base_price * quantity)
+        self.item_count += quantity
+        self.save()
 
-class Accommodation(models.Model):
-    ACCOMMODATION_TYPES = [
-        ('hotel', 'Hotel'),
-        ('airbnb', 'Airbnb'),
-        ('shortlet', 'Shortlet'),
-        ('guesthouse', 'Guest House'),
-        ('apartment', 'Apartment'),
-    ]
-    name = models.CharField(max_length=255)
-    accommodation_type = models.CharField(max_length=20, choices=ACCOMMODATION_TYPES, default='hotel')
-    description = models.TextField(blank=True, null=True)
-    address = models.CharField(max_length=255)
-    city = models.CharField(max_length=100)
-    state = models.CharField(max_length=100)
-    photos = models.ImageField(upload_to='accommodation_photos/', blank=True, null=True)
-    logo = models.ImageField(upload_to='accommodation_logos/', blank=True, null=True)
-    phone = models.CharField(max_length=16, blank=True, null=True)
-    email = models.EmailField(blank=True, null=True)
-    website = models.URLField(blank=True, null=True)
-    rating = models.DecimalField(max_digits=3, decimal_places=1, default=0.0)
-    price_range = models.CharField(max_length=50, blank=True, null=True)
-    amenities = models.TextField(blank=True, null=True)
-    is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+        return cart_item, created
 
-    def __str__(self):
-        return self.name
+    def remove_item(self, menu_item, quantity=None):
+        """
+        Remove quantity of an item from cart, or remove entirely if quantity is None.
+        """
+        try:
+            cart_item = CartItem.objects.get(cart=self, menu_item=menu_item)
 
-class Booking(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='bookings')
-    accommodation = models.ForeignKey(Accommodation, on_delete=models.CASCADE, related_name='bookings', null=True, blank=True)
-    booking_date = models.DateField()
-    booking_time = models.TimeField()
-    number_of_people = models.IntegerField()
-    room_type = models.CharField(max_length=100, blank=True, null=True)
-    special_requests = models.TextField(blank=True, null=True)
-    status = models.CharField(max_length=20, choices=[
-        ('pending', 'Pending'),
-        ('confirmed', 'Confirmed'),
-        ('completed', 'Completed'),
-        ('cancelled', 'Cancelled')
-    ], default='pending')
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now_add=True)
+            if quantity is None or quantity >= cart_item.quantity:
+                # Remove entire item
+                removed_quantity = cart_item.quantity
+                removed_price = cart_item.total_price
+                cart_item.delete()
+            else:
+                # Reduce quantity
+                removed_quantity = quantity
+                removed_price = cart_item.base_price * quantity
+                cart_item.quantity -= quantity
+                cart_item.total_price = cart_item.base_price * cart_item.quantity
+                cart_item.save()
 
-    def __str__(self):
-        return f"Booking #{self.id} by {self.user.email} at {self.accommodation.name if self.accommodation else 'N/A'}"
+            # Update cart totals
+            self.total_price -= removed_price
+            self.item_count -= removed_quantity
+            self.save()
 
-class Cart(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='carts')
-    vendor = models.ForeignKey(VendorProfile, on_delete=models.CASCADE, related_name='carts', null=True, blank=True)
-    is_active = models.BooleanField(default=True)
-    total_price = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+            return True, removed_quantity
 
-class OrderItem(models.Model):
-    cart = models.ForeignKey(Cart, on_delete=models.CASCADE, related_name='items')
-    menu_item = models.ForeignKey(MenuItem, on_delete=models.CASCADE)
+        except CartItem.DoesNotExist:
+            return False, 0
+
+    def clear(self):
+        """
+        Clear all items from the cart.
+        """
+        CartItem.objects.filter(cart=self).delete()
+        self.total_price = 0
+        self.item_count = 0
+        self.save()
+
+    def get_items(self):
+        """
+        Get all items in the cart with full details.
+        """
+        return CartItem.objects.filter(cart=self).select_related('menu_item')
+
+    @classmethod
+    def get_or_create_cart(cls, user, vendor, session_key=None):
+        """
+        Get or create a cart for the user/vendor combination.
+        """
+        # For authenticated users, look for existing active cart
+        if user and user.is_authenticated:
+            cart, created = cls.objects.get_or_create(
+                user=user,
+                vendor=vendor,
+                is_active=True,
+                defaults={'status': 'active'}
+            )
+        else:
+            # For anonymous users, use session key
+            if not session_key:
+                raise ValueError("Session key required for anonymous users")
+
+            cart, created = cls.objects.get_or_create(
+                session_key=session_key,
+                vendor=vendor,
+                is_active=True,
+                defaults={'status': 'active'}
+            )
+
+        return cart, created
+
+    def merge_with_user_cart(self, user):
+        """
+        Merge anonymous cart with user's cart when user logs in.
+        """
+        if not user or not user.is_authenticated:
+            return
+
+        # Find user's existing cart for this vendor
+        try:
+            user_cart = Cart.objects.get(
+                user=user,
+                vendor=self.vendor,
+                is_active=True
+            )
+
+            # Merge items from anonymous cart to user cart
+            for cart_item in self.get_items():
+                user_cart.add_item(
+                    cart_item.menu_item,
+                    cart_item.quantity,
+                    cart_item.variants,
+                    cart_item.special_instructions
+                )
+
+            # Delete anonymous cart
+            self.delete()
+
+            return user_cart
+
+        except Cart.DoesNotExist:
+            # No existing user cart, just assign this cart to the user
+            self.user = user
+            self.session_key = None
+            self.save()
+            return self
+
+
+class CartItem(models.Model):
+    """
+    Individual item in a shopping cart.
+    """
+    cart = models.ForeignKey(
+        Cart,
+        on_delete=models.CASCADE,
+        related_name='items'
+    )
+    menu_item = models.ForeignKey(
+        'product.Product',
+        on_delete=models.CASCADE,
+        related_name='cart_items'
+    )
     quantity = models.PositiveIntegerField(default=1)
-    price = models.DecimalField(max_digits=10, decimal_places=2)
-    notes = models.TextField(blank=True, null=True)  # for custom instructions
+    base_price = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        help_text='Price per unit at time of adding to cart'
+    )
+    variants = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Selected variants (size, toppings, etc.)'
+    )
+    special_instructions = models.TextField(
+        blank=True,
+        help_text='Special preparation instructions'
+    )
+    total_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text='Total price for this item (base_price * quantity)'
+    )
     added_at = models.DateTimeField(auto_now_add=True)
 
-    def __str__(self):
-        return f"{self.menu_item.dish_name} x {self.quantity} in Cart {self.cart_id}"
-
-class MenuUpdateReminderLog(models.Model):
-    vendor = models.ForeignKey('VendorProfile', on_delete=models.CASCADE, related_name='menu_update_reminders')
-    reminder_sent_at = models.DateTimeField(auto_now_add=True)
-    reminder_type = models.CharField(max_length=30, default='whatsapp', help_text='Channel: whatsapp/email/etc.')
-    status = models.CharField(max_length=30, default='pending', help_text='sent, delivered, failed')
-    message_body = models.TextField(blank=True, null=True)
+    class Meta:
+        verbose_name = 'Cart Item'
+        verbose_name_plural = 'Cart Items'
+        ordering = ['added_at']
+        unique_together = ['cart', 'menu_item']  # One item per cart
 
     def __str__(self):
-        return f"{self.vendor.business_name} reminded on {self.reminder_sent_at}"
+        return f"{self.cart} - {self.menu_item.dish_name} (x{self.quantity})"
+
+    def save(self, *args, **kwargs):
+        # Auto-calculate total price
+        from decimal import Decimal
+        self.total_price = Decimal(str(self.base_price)) * self.quantity
+        super().save(*args, **kwargs)
+
+
+class Favorite(models.Model):
+    """
+    Model for user favorites (food items or vendors).
+    """
+    FAVORITE_TYPES = [
+        ('food', 'Food Item'),
+        ('venue', 'Vendor/Venue'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='favorites')
+    favorite_type = models.CharField(max_length=20, choices=FAVORITE_TYPES)
+    food_item = models.ForeignKey(
+        'product.Product',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='favorites'
+    )
+    vendor = models.ForeignKey(
+        'VendorProfile',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='favorites'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Favorite'
+        verbose_name_plural = 'Favorites'
+        ordering = ['-created_at']
+        unique_together = ['user', 'food_item', 'vendor']  # Prevent duplicate favorites
+
+    def __str__(self):
+        if self.favorite_type == 'food':
+            return f"{self.user.email} - {self.food_item.name if self.food_item else 'Unknown Food'}"
+        else:
+            return f"{self.user.email} - {self.vendor.business_name if self.vendor else 'Unknown Vendor'}"
+
+
+class UserRecommendationHistory(models.Model):
+    """
+    Model to track when users receive personalized recommendations.
+    Used to ensure fair cycling and prevent spam.
+    """
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='recommendation_history')
+    last_sent = models.DateTimeField(null=True, blank=True)
+    total_sent = models.PositiveIntegerField(default=0)
+    # Featured vendor fields
+    is_featured = models.BooleanField(
+        default=False,
+        help_text='Whether this vendor is currently featured'
+    )
+    featured_priority = models.IntegerField(
+        default=0,
+        help_text='Priority order for featured vendors (higher = more prominent)'
+    )
+    featured_expiry = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='When the featured status expires'
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'User Recommendation History'
+        verbose_name_plural = 'User Recommendation Histories'
+        ordering = ['-last_sent']
+
+    def __str__(self):
+        return f"{self.user.email} - {self.total_sent} recommendations"
+
+    @staticmethod
+    def get_next_eligible_users(limit=15):
+        """
+        Get users who haven't received recommendations recently.
+        Cycles through users fairly to prevent any user from being spammed.
+        """
+        from django.db.models import Q
+        from datetime import timedelta
+
+        three_days_ago = timezone.now() - timedelta(days=3)
+
+        # Get users who haven't received recommendations in the last 3 days
+        # Order by last_sent (oldest first) to ensure fair cycling
+        eligible_histories = UserRecommendationHistory.objects.filter(
+            Q(last_sent__isnull=True) | Q(last_sent__lt=three_days_ago)
+        ).select_related('user').order_by('last_sent')[:limit]
+
+        return [history.user for history in eligible_histories]
+
+    @staticmethod
+    def create_or_get(user):
+        """
+        Get or create recommendation history for a user.
+        """
+        history, created = UserRecommendationHistory.objects.get_or_create(
+            user=user,
+            defaults={'total_sent': 0}
+        )
+        return history
+
+    def mark_sent(self):
+        """
+        Mark that a recommendation was sent to this user.
+        """
+        from django.utils import timezone
+        self.last_sent = timezone.now()
+        self.total_sent += 1
+        self.save()
+
+
+class ImageUpload(models.Model):
+    """
+    Model to track uploaded images with duplicate detection.
+    """
+    IMAGE_TYPES = [
+        ('vendor_logo', 'Vendor Logo'),
+        ('vendor_cover', 'Vendor Cover Photo'),
+        ('menu_item', 'Menu Item Image'),
+        ('courier_photo', 'Courier Profile Photo'),
+    ]
+
+    user = models.ForeignKey('User', on_delete=models.CASCADE, related_name='uploaded_images')
+    image_type = models.CharField(max_length=20, choices=IMAGE_TYPES)
+    image_hash = models.CharField(max_length=64, db_index=True, help_text="SHA256 hash for duplicate detection")
+    cloudinary_public_id = models.CharField(max_length=100, unique=True)
+    cloudinary_url = models.URLField()
+    original_filename = models.CharField(max_length=255)
+    file_size = models.PositiveIntegerField(help_text="File size in bytes")
+    metadata = models.JSONField(default=dict, help_text="Additional metadata about the image")
+    is_active = models.BooleanField(default=True, help_text="Whether this image is still in use")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Image Upload'
+        verbose_name_plural = 'Image Uploads'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['image_hash', 'image_type', 'is_active']),
+            models.Index(fields=['user', 'image_type']),
+        ]
+
+    def __str__(self):
+        return f"{self.image_type} - {self.original_filename}"
+
+    def get_optimized_url(self, width: Optional[int] = None, height: Optional[int] = None) -> str:
+        """
+        Get optimized image URL with optional resizing.
+        """
+        if not width and not height:
+            return self.cloudinary_url
+
+        # Use Cloudinary's URL transformation
+        # This is a simplified implementation - in production, use Cloudinary SDK
+        transformations = []
+        if width:
+            transformations.append(f"w_{width}")
+        if height:
+            transformations.append(f"h_{height}")
+        if width and height:
+            transformations.append("c_fill")
+
+        transform_str = ",".join(transformations)
+        base_url = self.cloudinary_url.replace('/upload/', f'/upload/{transform_str}/')
+        return base_url
+
 
 class SystemSettings(models.Model):
-    """System-wide settings for pricing and configuration"""
-    key = models.CharField(max_length=100, unique=True, help_text="Setting key (e.g., 'delivery_rate_per_km')")
-    value = models.CharField(max_length=255, help_text="Setting value")
-    description = models.TextField(blank=True, null=True, help_text="Description of what this setting controls")
-    data_type = models.CharField(max_length=20, choices=[
+    """
+    Model for storing system-wide settings and configuration values.
+    Used for dynamic configuration of platform settings like fees, rates, etc.
+    """
+    DATA_TYPE_CHOICES = [
         ('string', 'String'),
         ('integer', 'Integer'),
         ('decimal', 'Decimal'),
         ('boolean', 'Boolean'),
         ('json', 'JSON'),
-    ], default='string')
-    is_active = models.BooleanField(default=True)
+    ]
+
+    key = models.CharField(
+        max_length=100,
+        unique=True,
+        help_text='Unique key for the setting'
+    )
+    value = models.TextField(
+        help_text='Value of the setting (stored as string, cast based on data_type)'
+    )
+    description = models.TextField(
+        blank=True,
+        help_text='Description of what this setting controls'
+    )
+    data_type = models.CharField(
+        max_length=20,
+        choices=DATA_TYPE_CHOICES,
+        default='string',
+        help_text='Data type for proper casting'
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text='Whether this setting is currently active'
+    )
+    updated_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='updated_settings',
+        help_text='User who last updated this setting'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
 
     class Meta:
         verbose_name = 'System Setting'
         verbose_name_plural = 'System Settings'
         ordering = ['key']
+        indexes = [
+            models.Index(fields=['key', 'is_active']),
+        ]
 
     def __str__(self):
         return f"{self.key}: {self.value}"
 
+    @property
+    def typed_value(self):
+        """Return the value cast to the appropriate data type."""
+        if self.data_type == 'integer':
+            try:
+                return int(self.value)
+            except (ValueError, TypeError):
+                return 0
+        elif self.data_type == 'decimal':
+            try:
+                return Decimal(self.value)
+            except (ValueError, TypeError, decimal.InvalidOperation):
+                return Decimal('0.00')
+        elif self.data_type == 'boolean':
+            return self.value.lower() in ('true', '1', 'yes', 'on')
+        elif self.data_type == 'json':
+            try:
+                import json
+                return json.loads(self.value)
+            except (ValueError, TypeError):
+                return {}
+        else:
+            return self.value
+
     @classmethod
     def get_setting(cls, key, default=None):
-        """Get a setting value with type conversion"""
+        """
+        Get a setting value by key, with optional default.
+        Returns the typed value based on data_type.
+        """
         try:
             setting = cls.objects.get(key=key, is_active=True)
-            if setting.data_type == 'integer':
-                return int(setting.value)
-            elif setting.data_type == 'decimal':
-                from decimal import Decimal
-                return Decimal(setting.value)
-            elif setting.data_type == 'boolean':
-                return setting.value.lower() in ('true', '1', 'yes', 'on')
-            elif setting.data_type == 'json':
-                import json
-                return json.loads(setting.value)
-            else:
-                return setting.value
+            return setting.typed_value
         except cls.DoesNotExist:
             return default
 
     @classmethod
-    def set_setting(cls, key, value, description=None, data_type='string', user=None):
-        """Set a setting value"""
+    def set_setting(cls, key, value, description='', data_type='string', user=None):
+        """
+        Create or update a system setting.
+        """
+        # Determine data type if not specified
+        if data_type == 'string':
+            if isinstance(value, bool):
+                data_type = 'boolean'
+            elif isinstance(value, int):
+                data_type = 'integer'
+            elif isinstance(value, (Decimal, float)):
+                data_type = 'decimal'
+
         setting, created = cls.objects.get_or_create(
             key=key,
             defaults={
+                'value': str(value),
                 'description': description,
                 'data_type': data_type,
-                'updated_by': user
+                'updated_by': user,
             }
         )
-        setting.value = str(value)
-        setting.description = description or setting.description
-        setting.data_type = data_type
-        setting.updated_by = user
-        setting.save()
+
+        if not created:
+            setting.value = str(value)
+            setting.description = description or setting.description
+            setting.data_type = data_type
+            setting.updated_by = user
+            setting.is_active = True
+            setting.save()
+
         return setting
 
+    @classmethod
+    def get_active_settings(cls):
+        """
+        Get all active settings as a dictionary with typed values.
+        """
+        settings = {}
+        for setting in cls.objects.filter(is_active=True):
+            settings[setting.key] = setting.typed_value
+        return settings
+
+
 class PendingUser(models.Model):
-    """Temporary storage for users during WhatsApp verification signup process"""
-    USER_TYPES = [
+    """
+    Model for pending users awaiting verification.
+    Used during signup process before account activation.
+    """
+    USER_TYPE_CHOICES = [
         ('vendor', 'Vendor'),
         ('courier', 'Courier'),
     ]
 
-    # User data
     email = models.EmailField(unique=True)
-    password = models.CharField(max_length=128)  # Will be hashed when creating actual user
+    password = models.CharField(max_length=128)
     first_name = models.CharField(max_length=150)
     last_name = models.CharField(max_length=150)
     phone = models.CharField(max_length=16)
-
-    # User type
-    user_type = models.CharField(max_length=10, choices=USER_TYPES)
-
-    # Verification data
+    user_type = models.CharField(
+        max_length=10,
+        choices=USER_TYPE_CHOICES
+    )
     verification_code = models.CharField(max_length=6)
     code_generated_at = models.DateTimeField(auto_now_add=True)
-
-    # Vendor/Courier specific data (stored as JSON)
     profile_data = models.JSONField(default=dict)
-
-    # Status
     is_verified = models.BooleanField(default=False)
     verified_at = models.DateTimeField(null=True, blank=True)
-
-    # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
 
     class Meta:
+        verbose_name = 'Pending User'
+        verbose_name_plural = 'Pending Users'
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['email']),
@@ -1184,98 +1150,307 @@ class PendingUser(models.Model):
             models.Index(fields=['expires_at']),
         ]
 
-    def __str__(self):
-        return f"Pending {self.user_type}: {self.email}"
-
-    def save(self, *args, **kwargs):
-        # Set expiration to 24 hours from creation if not set
-        if not self.expires_at:
-            from django.utils import timezone
-            self.expires_at = timezone.now() + timezone.timedelta(hours=24)
-        super().save(*args, **kwargs)
-
     @property
     def is_expired(self):
-        from django.utils import timezone
+        """Check if the pending user verification has expired."""
         return timezone.now() > self.expires_at
 
-    def generate_verification_code(self):
-        """Generate a new 6-digit verification code"""
-        import random
-        self.verification_code = str(random.randint(100000, 999999))
-        self.code_generated_at = timezone.now()
-        self.save()
-
-    def verify_code(self, code):
-        """Verify the provided code"""
-        if self.is_expired:
-            return False, "Verification code has expired"
-
-        if self.verification_code != code:
-            return False, "Invalid verification code"
-
-        self.is_verified = True
-        self.verified_at = timezone.now()
-        self.save()
-        return True, "Code verified successfully"
-
     def create_user_account(self):
-        """Create the actual user account after verification"""
-        if not self.is_verified:
-            return None, "User not verified"
+        """
+        Create the actual user account from pending user data.
+        Handles multi-role registration by checking existing users.
+        """
+        try:
+            from django.contrib.auth import get_user_model
+            from django.db import transaction
+            User = get_user_model()
 
-        # Create the user
-        user = User.objects.create_user(
-            email=self.email,
-            password=self.password,  # This will be hashed by create_user
-            first_name=self.first_name,
-            last_name=self.last_name,
-            role=self.user_type
-        )
+            clean_phone = self.phone.replace('+', '').replace(' ', '').replace('-', '').strip()
 
-        # Create profile based on user type
-        if self.user_type == 'vendor':
-            VendorProfile.objects.create(
-                user=user,
-                phone=self.phone,
-                **self.profile_data
-            )
-        elif self.user_type == 'courier':
-            CourierProfile.objects.create(
-                user=user,
-                phone=self.phone,
-                **self.profile_data
-            )
+            with transaction.atomic():
+                # Check if user already exists - FIRST by email (most reliable), then by phone
+                # Do this INSIDE the transaction to avoid race conditions
+                existing_user = None
 
-        # Mark as processed and return user
-        self.delete()  # Remove pending user after successful creation
-        return user, "Account created successfully"
+                # Priority 1: Check if user exists by email (most reliable check)
+                try:
+                    existing_user = User.objects.select_for_update().get(email=self.email)
+                    logger.info(f"Found existing user by email: {existing_user.email}")
+                except User.DoesNotExist:
+                    # Priority 2: Look for existing user by phone across all profiles
+                    user_profile_exists = UserProfile.objects.filter(phone__icontains=clean_phone).exists()
+                    vendor_profile_exists = VendorProfile.objects.filter(phone__icontains=clean_phone).exists()
+                    courier_profile_exists = CourierProfile.objects.filter(phone__icontains=clean_phone).exists()
 
+                    if user_profile_exists or vendor_profile_exists or courier_profile_exists:
+                        # Find the user associated with any of these profiles
+                        if user_profile_exists:
+                            existing_user = UserProfile.objects.select_related('user').filter(phone__icontains=clean_phone).first().user
+                        elif vendor_profile_exists:
+                            existing_user = VendorProfile.objects.select_related('user').filter(phone__icontains=clean_phone).first().user
+                        elif courier_profile_exists:
+                            existing_user = CourierProfile.objects.select_related('user').filter(phone__icontains=clean_phone).first().user
 
-class Transfer(models.Model):
-    """Model to track individual transfers for Paystack payouts"""
-    STATUS_CHOICES = [
-        ('pending', 'Pending'),
-        ('success', 'Success'),
-        ('failed', 'Failed'),
-        ('reversed', 'Reversed'),
-    ]
+                        if existing_user:
+                            logger.info(f"Found existing user by phone: {existing_user.email}")
+                if existing_user:
+                    # User exists, add the new role/profile
+                    logger.info(f"Adding {self.user_type} role to existing user: {existing_user.email}")
 
-    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='transfers')
-    recipient = models.ForeignKey(TransferRecipient, on_delete=models.CASCADE, related_name='transfers')
-    amount = models.DecimalField(max_digits=10, decimal_places=2)
-    paystack_reference = models.CharField(max_length=100, unique=True)
-    paystack_transfer_code = models.CharField(max_length=50, blank=True, null=True)
-    reason = models.CharField(max_length=255)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
-    failure_reason = models.TextField(blank=True, null=True)
-    initiated_at = models.DateTimeField(auto_now_add=True)
-    completed_at = models.DateTimeField(blank=True, null=True)
+                    if self.user_type == 'vendor':
+                        # Check if vendor profile already exists using database query (with lock to prevent race conditions)
+                        if VendorProfile.objects.filter(user=existing_user).exists():
+                            logger.info(f"User {existing_user.email} already has a vendor profile - skipping creation")
+                            return existing_user, f"You have already signed up as a vendor. You can log in to your existing account."
 
-    class Meta:
-        verbose_name = 'Transfer'
-        verbose_name_plural = 'Transfers'
-        ordering = ['-initiated_at']
+                        # Create vendor profile with error handling for duplicate key violations
+                        try:
+                            VendorProfile.objects.create(
+                                user=existing_user,
+                                phone=self.phone,
+                                business_name=self.profile_data.get('business_name', ''),
+                                business_category=self.profile_data.get('business_category', ''),
+                                business_address=self.profile_data.get('business_address', ''),
+                                delivery_radius=self.profile_data.get('delivery_radius', '5'),
+                                service_areas=self.profile_data.get('service_areas', ''),
+                                offers_delivery=self.profile_data.get('offers_delivery', False),
+                                cac_number=self.profile_data.get('cac_number'),
+                                business_description=self.profile_data.get('business_description'),
+                            )
+                            logger.info(f"Successfully created vendor profile for user {existing_user.email}")
+                        except Exception as e:
+                            # Check if this is a duplicate key error (race condition or concurrent request)
+                            from django.db import IntegrityError
+                            error_str = str(e).lower()
+                            if isinstance(e, IntegrityError) and ('unique constraint failed' in error_str or 'duplicate key' in error_str) and ('vendorprofile' in error_str or 'user_id' in error_str):
+                                logger.warning(f"Vendor profile already exists for user {existing_user.email} (race condition detected)")
+                                # Verify it actually exists now
+                                if VendorProfile.objects.filter(user=existing_user).exists():
+                                    return existing_user, f"You have already signed up as a vendor. You can log in to your existing account."
+                            logger.error(f"Failed to create vendor profile for user {existing_user.email}: {str(e)}")
+                            return None, f"Failed to create vendor profile: {str(e)}"
+
+                    elif self.user_type == 'courier':
+                        # Check if courier profile already exists using database query
+                        if CourierProfile.objects.filter(user=existing_user).exists():
+                            logger.info(f"User {existing_user.email} already has a courier profile - skipping creation")
+                            return existing_user, f"You have already signed up as a courier. You can log in to your existing account."
+
+                        # Create courier profile with error handling for duplicate key violations
+                        try:
+                            CourierProfile.objects.create(
+                                user=existing_user,
+                                phone=self.phone,
+                                service_areas=self.profile_data.get('service_areas', ''),
+                                delivery_radius=self.profile_data.get('delivery_radius', '10'),
+                                opening_hours=self.profile_data.get('opening_hours'),
+                                closing_hours=self.profile_data.get('closing_hours'),
+                                has_bike=self.profile_data.get('has_bike', False),
+                                verification_preference=self.profile_data.get('verification_preference', 'NIN'),
+                                agreed_to_terms=self.profile_data.get('agreed_to_terms', False),
+                                vehicle_type=self.profile_data.get('vehicle_type'),
+                            )
+                            logger.info(f"Successfully created courier profile for user {existing_user.email}")
+                        except Exception as e:
+                            # Check if this is a duplicate key error (race condition or concurrent request)
+                            from django.db import IntegrityError
+                            error_str = str(e).lower()
+                            if isinstance(e, IntegrityError) and ('unique constraint failed' in error_str or 'duplicate key' in error_str) and ('courierprofile' in error_str or 'user_id' in error_str):
+                                logger.warning(f"Courier profile already exists for user {existing_user.email} (race condition detected)")
+                                # Verify it actually exists now
+                                if CourierProfile.objects.filter(user=existing_user).exists():
+                                    return existing_user, f"You have already signed up as a courier. You can log in to your existing account."
+                            logger.error(f"Failed to create courier profile for user {existing_user.email}: {str(e)}")
+                            return None, f"Failed to create courier profile: {str(e)}"
+
+                    # Update user's primary role if it's still 'user'
+                    if existing_user.role == 'user':
+                        existing_user.role = self.user_type
+                        existing_user.save()
+
+                    # Mark pending user as verified
+                    self.is_verified = True
+                    self.verified_at = timezone.now()
+                    self.save()
+
+                    return existing_user, f"Successfully added {self.user_type} role to existing account"
+
+                else:
+                    # Create new user account
+                    logger.info(f"Creating new user account for: {self.email}")
+
+                    # Create the user with error handling for duplicate email (race condition)
+                    user = None
+                    try:
+                        user = User.objects.create_user(
+                            email=self.email,
+                            password=self.password,
+                            first_name=self.first_name,
+                            last_name=self.last_name,
+                            phone=self.phone,
+                            role=self.user_type
+                        )
+                        logger.info(f"Successfully created new user: {user.email}")
+                    except Exception as e:
+                        # Check if this is a duplicate email error (race condition)
+                        from django.db import IntegrityError
+                        error_str = str(e).lower()
+                        if isinstance(e, IntegrityError) and ('unique constraint failed' in error_str or 'duplicate key' in error_str) and 'email' in error_str:
+                            logger.warning(f"User with email {self.email} already exists (race condition detected) - fetching existing user")
+                            # User exists - fetch it and treat as existing user
+                            try:
+                                existing_user = User.objects.get(email=self.email)
+                                # Check if profile already exists
+                                if self.user_type == 'vendor' and VendorProfile.objects.filter(user=existing_user).exists():
+                                    logger.info(f"User {existing_user.email} already has vendor profile")
+                                    self.is_verified = True
+                                    self.verified_at = timezone.now()
+                                    self.save()
+                                    return existing_user, f"You have already signed up as a vendor. You can log in to your existing account."
+                                elif self.user_type == 'courier' and CourierProfile.objects.filter(user=existing_user).exists():
+                                    logger.info(f"User {existing_user.email} already has courier profile")
+                                    self.is_verified = True
+                                    self.verified_at = timezone.now()
+                                    self.save()
+                                    return existing_user, f"You have already signed up as a courier. You can log in to your existing account."
+                                # User exists but doesn't have this profile type - continue to create profile
+                                user = existing_user
+                                logger.info(f"User exists but needs {self.user_type} profile - will create profile")
+                            except User.DoesNotExist:
+                                logger.error(f"IntegrityError for email but user not found: {self.email}")
+                                return None, f"An account with this email may already exist. Please try logging in."
+                        else:
+                            logger.error(f"Failed to create user with email {self.email}: {str(e)}")
+                            return None, f"Failed to create user account: {str(e)}"
+
+                    # If we still don't have a user at this point, something went wrong
+                    if not user:
+                        logger.error(f"User is None after creation attempt for {self.email}")
+                        return None, f"Failed to create user account."
+
+                    # Before creating profile, double-check it doesn't already exist (race condition protection)
+                    if self.user_type == 'vendor':
+                        if VendorProfile.objects.filter(user=user).exists():
+                            logger.warning(f"Vendor profile already exists for user {user.email} - this shouldn't happen in new user creation path")
+                            # Profile already exists - mark as verified and return
+                            self.is_verified = True
+                            self.verified_at = timezone.now()
+                            self.save()
+                            return user, "Account already exists. Profile verified."
+                    elif self.user_type == 'courier':
+                        if CourierProfile.objects.filter(user=user).exists():
+                            logger.warning(f"Courier profile already exists for user {user.email} - this shouldn't happen in new user creation path")
+                            # Profile already exists - mark as verified and return
+                            self.is_verified = True
+                            self.verified_at = timezone.now()
+                            self.save()
+                            return user, "Account already exists. Profile verified."
+
+                    # Create appropriate profile based on user type
+                    try:
+                        if self.user_type == 'vendor':
+                            VendorProfile.objects.create(
+                                user=user,
+                                phone=self.phone,
+                                business_name=self.profile_data.get('business_name', ''),
+                                business_category=self.profile_data.get('business_category', ''),
+                                business_address=self.profile_data.get('business_address', ''),
+                                delivery_radius=self.profile_data.get('delivery_radius', '5'),
+                                service_areas=self.profile_data.get('service_areas', ''),
+                                offers_delivery=self.profile_data.get('offers_delivery', False),
+                                cac_number=self.profile_data.get('cac_number'),
+                                business_description=self.profile_data.get('business_description'),
+                            )
+
+                        elif self.user_type == 'courier':
+                            CourierProfile.objects.create(
+                                user=user,
+                                phone=self.phone,
+                                service_areas=self.profile_data.get('service_areas', ''),
+                                delivery_radius=self.profile_data.get('delivery_radius', '10'),
+                                opening_hours=self.profile_data.get('opening_hours'),
+                                closing_hours=self.profile_data.get('closing_hours'),
+                                has_bike=self.profile_data.get('has_bike', False),
+                                verification_preference=self.profile_data.get('verification_preference', 'NIN'),
+                                agreed_to_terms=self.profile_data.get('agreed_to_terms', False),
+                                vehicle_type=self.profile_data.get('vehicle_type'),
+                            )
+
+                        else:
+                            # Regular user profile
+                            UserProfile.objects.create(
+                                user=user,
+                                phone=self.phone,
+                            )
+                    except Exception as e:
+                        # Check if this is a duplicate profile error - handle it gracefully
+                        from django.db import IntegrityError
+                        error_str = str(e).lower()
+                        error_message = str(e)
+
+                        logger.warning(f"Exception while creating {self.user_type} profile for user {user.email}: {error_message}")
+
+                        if isinstance(e, IntegrityError):
+                            # Check for UNIQUE constraint errors - SQLite format: "UNIQUE constraint failed: user_vendorprofile.user_id"
+                            is_unique_error = ('unique constraint failed' in error_str or 'duplicate key' in error_str or 'unique' in error_str)
+
+                            if is_unique_error:
+                                # Check for vendor profile constraint
+                                if self.user_type == 'vendor' and ('vendorprofile' in error_str or 'user_vendorprofile' in error_str or 'user_id' in error_str):
+                                    logger.warning(f"Vendor profile UNIQUE constraint violation for user {user.email} - checking if profile exists")
+                                    # Verify it exists and return success
+                                    profile_exists = VendorProfile.objects.filter(user=user).exists()
+                                    if profile_exists:
+                                        logger.info(f"Vendor profile exists for user {user.email} - returning success")
+                                        self.is_verified = True
+                                        self.verified_at = timezone.now()
+                                        self.save()
+                                        return user, "Account already exists. Profile verified."
+                                    else:
+                                        logger.error(f"IntegrityError but profile doesn't exist - this is unexpected for user {user.email}")
+
+                                # Check for courier profile constraint
+                                elif self.user_type == 'courier' and ('courierprofile' in error_str or 'user_courierprofile' in error_str or 'user_id' in error_str):
+                                    logger.warning(f"Courier profile UNIQUE constraint violation for user {user.email} - checking if profile exists")
+                                    profile_exists = CourierProfile.objects.filter(user=user).exists()
+                                    if profile_exists:
+                                        logger.info(f"Courier profile exists for user {user.email} - returning success")
+                                        self.is_verified = True
+                                        self.verified_at = timezone.now()
+                                        self.save()
+                                        return user, "Account already exists. Profile verified."
+                                    else:
+                                        logger.error(f"IntegrityError but profile doesn't exist - this is unexpected for user {user.email}")
+
+                                # Check for user profile constraint
+                                elif self.user_type == 'user' and ('userprofile' in error_str or 'user_userprofile' in error_str or 'user_id' in error_str):
+                                    logger.warning(f"User profile UNIQUE constraint violation for user {user.email} - checking if profile exists")
+                                    profile_exists = UserProfile.objects.filter(user=user).exists()
+                                    if profile_exists:
+                                        logger.info(f"User profile exists for user {user.email} - returning success")
+                                        self.is_verified = True
+                                        self.verified_at = timezone.now()
+                                        self.save()
+                                        return user, "Account already exists. Profile verified."
+                                    else:
+                                        logger.error(f"IntegrityError but profile doesn't exist - this is unexpected for user {user.email}")
+
+                        # If we get here, it's not a duplicate profile error or profile doesn't exist
+                        # For any other IntegrityError or exception, return error
+                        logger.error(f"Failed to create {self.user_type} profile for user {user.email}: {error_message}")
+                        # Return error - transaction will handle cleanup
+                        return None, f"Failed to create {self.user_type} profile: {error_message}"
+
+                    # Mark pending user as verified
+                    self.is_verified = True
+                    self.verified_at = timezone.now()
+                    self.save()
+
+                    return user, "Account created successfully"
+
+        except Exception as e:
+            logger.error(f"Error creating user account: {str(e)}", exc_info=True)
+            return None, f"Failed to create account: {str(e)}"
 
     def __str__(self):
-        return f"Transfer {self.paystack_reference} - ₦{self.amount} to {self.recipient.account_name}"
+        return f"{self.email} - {self.user_type} (Pending)"

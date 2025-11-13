@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.contrib.auth.decorators import permission_required
 from django.shortcuts import get_object_or_404
-from bestyy.core_features.user.models import User, VendorSubscription, SubscriptionPlan
+from bestyy.core_features.user.models import User, DedicatedVirtualAccount
 from bestyy.core_features.user.services.paystack_service import PaystackService
 from django.utils import timezone
 from datetime import timedelta
@@ -139,424 +139,6 @@ def requery_account(request):
         }, status=status.HTTP_404_NOT_FOUND)
 
 
-# ============================================================================
-# SUBSCRIPTION PAYMENT ENDPOINTS
-# ============================================================================
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def get_subscription_plans(request):
-    """
-    Get available subscription plans for vendor featured status
-    """
-    from ..models import SubscriptionPlan
-
-    plans = SubscriptionPlan.get_active_plans()
-    plans_data = []
-
-    for plan in plans:
-        plans_data.append({
-            'id': plan.plan_type,
-            'name': plan.name,
-            'duration_days': plan.duration_days,
-            'price': float(plan.price),
-            'description': plan.description or f'Get featured for {plan.duration_days} days - appear first in recommendations',
-            'featured_priority': plan.featured_priority
-        })
-
-    return Response({
-        'success': True,
-        'plans': plans_data
-    })
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def purchase_subscription(request):
-    """
-    Purchase a subscription plan for vendor featured status
-    """
-    user = request.user
-    plan_id = request.data.get('plan_id')
-
-    if not plan_id:
-        return Response({
-            'success': False,
-            'error': 'plan_id is required'
-        }, status=status.HTTP_400_BAD_REQUEST)
-
-    # Check if user is a vendor
-    if not user.has_role('vendor'):
-        return Response({
-            'success': False,
-            'error': 'Only vendors can purchase featured subscriptions'
-        }, status=status.HTTP_403_FORBIDDEN)
-
-    # Get vendor profile
-    try:
-        vendor_profile = user.vendor_profile
-    except:
-        return Response({
-            'success': False,
-            'error': 'Vendor profile not found'
-        }, status=status.HTTP_404_NOT_FOUND)
-
-    # Get the subscription plan
-    try:
-        plan = SubscriptionPlan.objects.get(plan_type=plan_id, is_active=True)
-    except SubscriptionPlan.DoesNotExist:
-        return Response({
-            'success': False,
-            'error': f'Invalid or inactive plan: {plan_id}'
-        }, status=status.HTTP_400_BAD_REQUEST)
-
-    # Check if vendor already has an active subscription
-    active_subscription = VendorSubscription.objects.filter(
-        vendor=vendor_profile,
-        status='active',
-        end_date__gt=timezone.now()
-    ).first()
-
-    if active_subscription:
-        return Response({
-            'success': False,
-            'error': 'You already have an active featured subscription',
-            'current_subscription': {
-                'plan_type': active_subscription.plan_type,
-                'end_date': active_subscription.end_date.isoformat(),
-                'days_remaining': (active_subscription.end_date - timezone.now()).days
-            }
-        }, status=status.HTTP_400_BAD_REQUEST)
-
-    # Create subscription record (pending payment)
-    subscription = VendorSubscription.objects.create(
-        vendor=vendor_profile,
-        plan=plan,
-        status='pending',
-        amount_paid=plan.price,
-        start_date=timezone.now(),
-        end_date=timezone.now() + timedelta(days=plan.duration_days)
-    )
-
-    # Initialize Paystack payment
-    paystack_service = PaystackService()
-
-    # Create payment reference
-    reference = f"sub_{subscription.id}_{int(timezone.now().timestamp())}"
-
-    # Initialize transaction
-    payment_data = {
-        'email': user.email,
-        'amount': int(plan.price * 100),  # Convert to kobo
-        'reference': reference,
-        'callback_url': f"{request.build_absolute_uri('/')}api/user/subscription/callback/",
-        'metadata': {
-            'subscription_id': subscription.id,
-            'plan_id': plan_id,
-            'vendor_id': vendor_profile.id,
-            'user_id': user.id
-        }
-    }
-
-    result = paystack_service.initialize_transaction(payment_data)
-
-    if result['success']:
-        # Update subscription with payment reference
-        subscription.payment_reference = reference
-        subscription.save()
-
-        return Response({
-            'success': True,
-            'message': f'Subscription payment initialized for {plan.name} plan',
-            'subscription': {
-                'id': subscription.id,
-                'plan_type': plan_id,
-                'amount': float(plan.price),
-                'duration_days': plan.duration_days,
-                'status': 'pending_payment'
-            },
-            'payment': {
-                'reference': reference,
-                'authorization_url': result['authorization_url'],
-                'access_code': result['access_code'],
-                'amount': float(plan.price),
-                'currency': 'NGN',
-                'available_payment_methods': [
-                    {
-                        'id': 'card',
-                        'name': 'Debit/Credit Card',
-                        'description': 'Visa, Mastercard, Verve',
-                        'icon': '💳',
-                        'processing_time': 'Instant'
-                    },
-                    {
-                        'id': 'bank_transfer',
-                        'name': 'Bank Transfer',
-                        'description': 'Direct bank transfer',
-                        'icon': '🏦',
-                        'processing_time': '5-15 minutes'
-                    },
-                    {
-                        'id': 'ussd',
-                        'name': 'USSD',
-                        'description': 'Dial *737* or *833*',
-                        'icon': '📱',
-                        'processing_time': 'Instant'
-                    },
-                    {
-                        'id': 'qr',
-                        'name': 'QR Code',
-                        'description': 'Scan with banking app',
-                        'icon': '📱',
-                        'processing_time': 'Instant'
-                    }
-                ]
-            }
-        })
-
-    # Clean up failed subscription
-    subscription.delete()
-
-    return Response({
-        'success': False,
-        'error': result.get('error', 'Failed to initialize payment')
-    }, status=status.HTTP_400_BAD_REQUEST)
-
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def get_subscription_status(request):
-    """
-    Get current subscription status for vendor
-    """
-    user = request.user
-
-    if not user.has_role('vendor'):
-        return Response({
-            'success': False,
-            'error': 'Only vendors can check subscription status'
-        }, status=status.HTTP_403_FORBIDDEN)
-
-    try:
-        vendor_profile = user.vendor_profile
-    except:
-        return Response({
-            'success': False,
-            'error': 'Vendor profile not found'
-        }, status=status.HTTP_404_NOT_FOUND)
-
-    # Get current subscription
-    subscription = VendorSubscription.objects.filter(
-        vendor=vendor_profile
-    ).order_by('-created_at').first()
-
-    if not subscription:
-        return Response({
-            'success': True,
-            'has_subscription': False,
-            'message': 'No subscription found'
-        })
-
-    # Check if subscription is active
-    is_active = (
-        subscription.status == 'active' and
-        subscription.end_date and
-        subscription.end_date > timezone.now()
-    )
-
-    response_data = {
-        'success': True,
-        'has_subscription': True,
-        'subscription': {
-            'id': subscription.id,
-            'plan_type': subscription.plan_type,
-            'status': subscription.status,
-            'amount_paid': float(subscription.amount_paid),
-            'start_date': subscription.start_date.isoformat() if subscription.start_date else None,
-            'end_date': subscription.end_date.isoformat() if subscription.end_date else None,
-            'is_featured': subscription.is_featured,
-            'featured_priority': subscription.featured_priority,
-            'payment_reference': subscription.payment_reference
-        },
-        'is_active': is_active
-    }
-
-    if is_active and subscription.end_date:
-        response_data['days_remaining'] = (subscription.end_date - timezone.now()).days
-
-    return Response(response_data)
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def cancel_subscription(request):
-    """
-    Cancel an active subscription (effective immediately)
-    """
-    user = request.user
-
-    if not user.has_role('vendor'):
-        return Response({
-            'success': False,
-            'error': 'Only vendors can cancel subscriptions'
-        }, status=status.HTTP_403_FORBIDDEN)
-
-    try:
-        vendor_profile = user.vendor_profile
-    except:
-        return Response({
-            'success': False,
-            'error': 'Vendor profile not found'
-        }, status=status.HTTP_404_NOT_FOUND)
-
-    # Get active subscription
-    subscription = VendorSubscription.objects.filter(
-        vendor=vendor_profile,
-        status='active',
-        end_date__gt=timezone.now()
-    ).first()
-
-    if not subscription:
-        return Response({
-            'success': False,
-            'error': 'No active subscription found'
-        }, status=status.HTTP_404_NOT_FOUND)
-
-    # Cancel subscription
-    subscription.status = 'cancelled'
-    subscription.end_date = timezone.now()  # End immediately
-    subscription.is_featured = False
-    subscription.featured_priority = 0
-    subscription.save()
-
-    return Response({
-        'success': True,
-        'message': 'Subscription cancelled successfully',
-        'subscription': {
-            'id': subscription.id,
-            'status': 'cancelled',
-            'end_date': subscription.end_date.isoformat()
-        }
-    })
-
-
-@api_view(['POST'])
-@permission_classes([])  # No authentication for webhook
-def subscription_payment_webhook(request):
-    """
-    Handle Paystack webhook for subscription payments
-    """
-    # Verify webhook signature (implement in production)
-    # For now, process the webhook
-
-    event = request.data.get('event')
-    data = request.data.get('data', {})
-
-    if event == 'charge.success':
-        reference = data.get('reference', '')
-
-        # Check if this is a subscription payment
-        if reference.startswith('sub_'):
-            try:
-                # Extract subscription ID from reference
-                parts = reference.split('_')
-                if len(parts) >= 2:
-                    subscription_id = int(parts[1])
-
-                    subscription = VendorSubscription.objects.get(id=subscription_id)
-
-                    # Activate subscription
-                    subscription.status = 'active'
-                    subscription.is_featured = True
-                    subscription.featured_priority = subscription.plan.featured_priority
-                    subscription.featured_expiry = subscription.end_date
-                    subscription.save()
-
-                    # Update vendor profile directly for immediate effect
-                    vendor_profile = subscription.vendor
-                    vendor_profile.is_featured = True
-                    vendor_profile.featured_priority = subscription.plan.featured_priority
-                    vendor_profile.featured_expiry = subscription.end_date
-                    vendor_profile.save()
-
-                    logger.info(f"Subscription {subscription_id} activated for vendor {vendor_profile.business_name}")
-
-                    # Send notification to vendor
-                    try:
-                        message = f"🎉 Congratulations! Your featured subscription has been activated. You now appear first in search results and recommendations for {subscription.plan.duration_days} days."
-
-                        # Send via WhatsApp if available
-                        if hasattr(vendor_profile.user, 'phone') and vendor_profile.user.phone:
-                            from whatsapp_ai.services.whatsapp_service import WhatsAppService
-                            whatsapp_service = WhatsAppService()
-                            whatsapp_service.send_message(
-                                to=vendor_profile.user.phone,
-                                message=message,
-                                message_type='subscription_activated'
-                            )
-
-                        # Send via email
-                        from django.core.mail import send_mail
-                        from django.conf import settings
-
-                        email_subject = "Featured Subscription Activated! 🎉"
-                        email_html = f"""
-                        <html>
-                        <body>
-                            <h2>Featured Status Activated!</h2>
-                            <p>Dear {vendor_profile.business_name},</p>
-                            <p>{message}</p>
-                            <p><strong>Plan Details:</strong></p>
-                            <ul>
-                                <li>Duration: {subscription.plan.duration_days} days</li>
-                                <li>Priority Level: {subscription.plan.featured_priority}</li>
-                                <li>Expires: {subscription.end_date.strftime('%B %d, %Y')}</li>
-                            </ul>
-                            <p>You will now appear prominently in search results and recommendations.</p>
-                            <p>Best regards,<br>Bestyy Team</p>
-                        </body>
-                        </html>
-                        """
-
-                        send_mail(
-                            subject=email_subject,
-                            message=message,  # Plain text version
-                            html_message=email_html,
-                            from_email=settings.DEFAULT_FROM_EMAIL,
-                            recipient_list=[vendor_profile.user.email],
-                            fail_silently=True
-                        )
-
-                    except Exception as e:
-                        logger.error(f"Failed to send activation notification: {str(e)}")
-
-            except (ValueError, VendorSubscription.DoesNotExist) as e:
-                logger.error(f"Failed to process subscription webhook: {str(e)}")
-
-    return Response({'status': 'success'})
-
-
-@api_view(['GET'])
-@permission_classes([])  # Public endpoint
-def subscription_payment_callback(request):
-    """
-    Handle payment callback from Paystack
-    """
-    reference = request.GET.get('reference')
-
-    if not reference or not reference.startswith('sub_'):
-        return Response({
-            'error': 'Invalid payment reference'
-        }, status=status.HTTP_400_BAD_REQUEST)
-
-    # In production, verify payment with Paystack
-    # For now, redirect to success page
-
-    return Response({
-        'success': True,
-        'message': 'Payment completed. Subscription will be activated shortly.',
-        'reference': reference
-    })
 
 
 @api_view(['POST'])
@@ -700,12 +282,12 @@ def get_system_settings(request):
     settings = SystemSettings.get_active_settings()
 
     return Response({
-        'vendor_commission_percentage': float(settings.vendor_commission_percentage),
-        'base_delivery_fee': float(settings.base_delivery_fee),
-        'delivery_fee_per_km': float(settings.delivery_fee_per_km),
-        'rider_base_fee': float(settings.rider_base_fee),
-        'rider_fee_per_km': float(settings.rider_fee_per_km),
-        'service_fee_percentage': float(settings.service_fee_percentage)
+        'vendor_commission_percentage': float(settings['vendor_commission_percentage']),
+        'base_delivery_fee': float(settings['base_delivery_fee']),
+        'delivery_fee_per_km': float(settings['delivery_fee_per_km']),
+        'rider_base_fee': float(settings['rider_base_fee']),
+        'rider_fee_per_km': float(settings['rider_fee_per_km']),
+        'service_fee_percentage': float(settings['service_fee_percentage'])
     })
 
 
@@ -718,35 +300,40 @@ def update_system_settings(request):
     """
     from bestyy.core_features.user.models import SystemSettings
 
-    settings = SystemSettings.get_active_settings()
-
-    # Update fields if provided
+    # Update individual settings using the set_setting method
+    updated_settings = {}
     if 'vendor_commission_percentage' in request.data:
-        settings.vendor_commission_percentage = request.data['vendor_commission_percentage']
+        SystemSettings.set_setting('vendor_commission_percentage', request.data['vendor_commission_percentage'], user=request.user)
+        updated_settings['vendor_commission_percentage'] = request.data['vendor_commission_percentage']
     if 'base_delivery_fee' in request.data:
-        settings.base_delivery_fee = request.data['base_delivery_fee']
+        SystemSettings.set_setting('base_delivery_fee', request.data['base_delivery_fee'], user=request.user)
+        updated_settings['base_delivery_fee'] = request.data['base_delivery_fee']
     if 'delivery_fee_per_km' in request.data:
-        settings.delivery_fee_per_km = request.data['delivery_fee_per_km']
+        SystemSettings.set_setting('delivery_fee_per_km', request.data['delivery_fee_per_km'], user=request.user)
+        updated_settings['delivery_fee_per_km'] = request.data['delivery_fee_per_km']
     if 'rider_base_fee' in request.data:
-        settings.rider_base_fee = request.data['rider_base_fee']
+        SystemSettings.set_setting('rider_base_fee', request.data['rider_base_fee'], user=request.user)
+        updated_settings['rider_base_fee'] = request.data['rider_base_fee']
     if 'rider_fee_per_km' in request.data:
-        settings.rider_fee_per_km = request.data['rider_fee_per_km']
+        SystemSettings.set_setting('rider_fee_per_km', request.data['rider_fee_per_km'], user=request.user)
+        updated_settings['rider_fee_per_km'] = request.data['rider_fee_per_km']
     if 'service_fee_percentage' in request.data:
-        settings.service_fee_percentage = request.data['service_fee_percentage']
+        SystemSettings.set_setting('service_fee_percentage', request.data['service_fee_percentage'], user=request.user)
+        updated_settings['service_fee_percentage'] = request.data['service_fee_percentage']
 
-    settings.created_by = request.user
-    settings.save()
+    # Get updated settings for response
+    settings = SystemSettings.get_active_settings()
 
     return Response({
         'success': True,
         'message': 'System settings updated successfully',
         'settings': {
-            'vendor_commission_percentage': float(settings.vendor_commission_percentage),
-            'base_delivery_fee': float(settings.base_delivery_fee),
-            'delivery_fee_per_km': float(settings.delivery_fee_per_km),
-            'rider_base_fee': float(settings.rider_base_fee),
-            'rider_fee_per_km': float(settings.rider_fee_per_km),
-            'service_fee_percentage': float(settings.service_fee_percentage)
+            'vendor_commission_percentage': float(settings.get('vendor_commission_percentage', 0)),
+            'base_delivery_fee': float(settings.get('base_delivery_fee', 0)),
+            'delivery_fee_per_km': float(settings.get('delivery_fee_per_km', 0)),
+            'rider_base_fee': float(settings.get('rider_base_fee', 0)),
+            'rider_fee_per_km': float(settings.get('rider_fee_per_km', 0)),
+            'service_fee_percentage': float(settings.get('service_fee_percentage', 0))
         }
     })
 

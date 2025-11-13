@@ -10,8 +10,11 @@ from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.db import models
 from bestyy.core_features.user.models import (
-    VendorProfile, MenuItem, Cart, Order, Address, OrderItem
+    VendorProfile, Address
 )
+from bestyy.restaurant_features.product.models import Product as MenuItem
+from bestyy.restaurant_features.vendor.models import Vendor
+from bestyy.restaurant_features.order.models import Order, OrderItem
 from django.db.models import Avg
 from bestyy.core_features.user.services.paystack_service import PaystackService
 
@@ -23,15 +26,36 @@ class WhatsAppOrderService:
     """
     Service to handle order processing from WhatsApp messages
     """
-    
+
     def __init__(self):
         self.paystack_service = PaystackService()
         self.base_url = getattr(settings, 'BASE_URL', 'http://127.0.0.1:8000')
+
+    def _get_optimized_image_url(self, image_field):
+        """Get optimized Cloudinary URL for images"""
+        if image_field:
+            try:
+                if hasattr(image_field, 'url'):
+                    url = image_field.url
+                    if 'cloudinary.com' in url:
+                        return url.replace('/upload/', '/upload/w_400,h_300,c_fill,f_auto,q_auto/')
+                    return url
+                else:
+                    return str(image_field)
+            except Exception:
+                return None
+        return None
     
-    def search_vendors_by_food(self, food_type, limit=3, offset=0):
+    def search_vendors_by_food(self, food_type, limit=3, offset=0, vendor_ids=None):
         """
         Search for vendors that serve a specific food type
         Returns list of vendors with menu items, pictures, prices, and ratings
+
+        Args:
+            food_type: Type of food to search for
+            limit: Maximum number of vendors to return
+            offset: Offset for pagination
+            vendor_ids: Optional list of specific vendor IDs to filter by
         """
         try:
             # Map food types to vendor categories
@@ -67,11 +91,17 @@ class WhatsAppOrderService:
             ).count()
 
             # Get vendors with pagination
-            vendors = VendorProfile.objects.filter(
+            vendor_query = VendorProfile.objects.filter(
                 verification_status='approved',
                 is_suspended=False,
                 business_category__icontains=search_category
-            )[offset:offset + limit]
+            )
+
+            # Filter by specific vendor IDs if provided
+            if vendor_ids:
+                vendor_query = vendor_query.filter(id__in=vendor_ids)
+
+            vendors = vendor_query[offset:offset + limit]
 
             vendor_data = []
             for vendor in vendors:
@@ -122,11 +152,11 @@ class WhatsAppOrderService:
                     'menu_items': [
                         {
                             'id': item.id,
-                            'name': item.dish_name,
+                            'name': item.name,
                             'price': float(item.price),
-                            'description': item.item_description,
-                            'picture': item.image.url if item.image else None,
-                            'available': item.available_now
+                            'description': item.description,
+                            'picture': self._get_optimized_image_url(item.image) if hasattr(item, 'image') and item.image else None,
+                            'available': item.is_available
                         }
                         for item in menu_items
                     ]
@@ -160,29 +190,30 @@ class WhatsAppOrderService:
             # Get vendor
             vendor = VendorProfile.objects.get(id=vendor_id)
             
-            # Create cart
-            cart = Cart.objects.create(user=user, vendor=vendor)
-            
+            # Create cart - Cart model was removed, using Order directly
+            # cart = Cart.objects.create(user=user, vendor=vendor)
+
             total_price = Decimal('0.00')
             order_items_data = []
-            
-            # Add items to cart
+
+            # Add items to cart - Cart model removed, using OrderItem directly
             for item_data in items_data:
                 menu_item = MenuItem.objects.get(id=item_data['menu_item_id'])
                 quantity = item_data.get('quantity', 1)
-                
-                cart_item = OrderItem.objects.create(
-                    cart=cart,
-                    menu_item=menu_item,
-                    quantity=quantity,
-                    price=menu_item.price
-                )
+
+                # Create OrderItem without cart reference
+                # cart_item = OrderItem.objects.create(
+                #     cart=cart,
+                #     menu_item=menu_item,
+                #     quantity=quantity,
+                #     price=menu_item.price
+                # )
                 
                 item_total = menu_item.price * quantity
                 total_price += item_total
                 
                 order_items_data.append({
-                    'name': menu_item.dish_name,
+                    'name': menu_item.name,
                     'quantity': quantity,
                     'price': float(menu_item.price),
                     'total': float(item_total)
@@ -280,7 +311,7 @@ class WhatsAppOrderService:
                 total_price += item_total
                 
                 order_items_data.append({
-                    'name': menu_item.dish_name,
+                    'name': menu_item.name,
                     'quantity': quantity,
                     'price': float(menu_item.price),
                     'total': float(item_total)

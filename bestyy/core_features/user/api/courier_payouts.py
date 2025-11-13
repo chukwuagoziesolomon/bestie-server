@@ -7,7 +7,7 @@ from django.db.models import Sum, Count, Q
 from datetime import timedelta, date
 from decimal import Decimal
 
-from bestyy.core_features.user.models import Order
+from bestyy.restaurant_features.order.models import Order
 from bestyy.core_features.user.api.serializers import DeliverySerializer
 
 class CourierPayoutHistoryView(APIView):
@@ -96,7 +96,7 @@ class CourierPayoutHistoryView(APIView):
                 'order_id': order.id,
                 'order_name': order.order_name or f"Order #{order.id}",
                 'amount': float(order.commission) if order.commission else 0.0,
-                'delivery_fee': float(order.total_price) if order.total_price else 0.0,
+                'delivery_fee': float(order.total_amount) if order.total_amount else 0.0,
                 'date': order.delivered_at.strftime('%Y-%m-%d %H:%M:%S') if order.delivered_at else None,
                 'status': order.status,
                 'customer': str(order.user) if order.user else None,
@@ -137,7 +137,7 @@ class CourierPayoutHistoryView(APIView):
         
         # Total delivery fees (if any)
         total_delivery_fees = queryset.aggregate(
-            total=Sum('total_price')
+            total=Sum('total_amount')
         )['total'] or Decimal('0.00')
         
         # Total deliveries

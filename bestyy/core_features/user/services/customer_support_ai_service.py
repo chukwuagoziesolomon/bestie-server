@@ -100,7 +100,7 @@ class CustomerSupportAIService:
                     context['order_info'] = {
                         'order_id': order.id,
                         'status': order.status,
-                        'total_price': float(order.total_price),
+                        'total_amount': float(order.total_amount),
                         'order_time': order.order_placed_at.isoformat(),
                         'vendor_name': order.vendor.business_name,
                         'delivery_address': order.delivery_address
@@ -234,7 +234,7 @@ Guidelines:
             order = context['order_info']
             context_parts.append(f"Order #{order.get('order_id', 'N/A')}: {order.get('status', 'Unknown status')}")
             context_parts.append(f"Vendor: {order.get('vendor_name', 'Unknown')}")
-            context_parts.append(f"Total: ₦{order.get('total_price', 0)}")
+            context_parts.append(f"Total: ₦{order.get('total_amount', 0)}")
             context_parts.append(f"Order Time: {order.get('order_time', 'Unknown')}")
         
         # Delivery status

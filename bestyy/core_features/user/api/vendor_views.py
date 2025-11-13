@@ -77,15 +77,66 @@ class VendorProfileView(generics.RetrieveUpdateAPIView):
     """
     Endpoint for vendors to view and update their profile.
     Requires vendor authentication and verification.
+    Supports updating logo and cover images.
     """
     permission_classes = [permissions.IsAuthenticated, IsVerifiedVendor]
     serializer_class = VendorProfileSerializer
     parser_classes = [MultiPartParser, JSONParser]
-    
+
     def get_object(self):
         # Get the vendor profile for the current user
         # The IsVerifiedVendor permission ensures the profile exists
         return self.request.user.vendor_profile
+
+    def update(self, request, *args, **kwargs):
+        """Override update to handle Cloudinary URLs and file uploads"""
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+
+        # Handle Cloudinary URLs (strings) and file uploads
+        url_fields = ['logo', 'cover_image', 'cover_photo']
+        for field_name in url_fields:
+            if field_name in request.data:
+                # If it's a string, treat it as Cloudinary URL
+                value = request.data[field_name]
+                if isinstance(value, str) and value.strip():
+                    # Check if it's a Cloudinary URL - if so, store as string
+                    if value.startswith('http') and 'cloudinary' in value:
+                        setattr(instance, field_name, value)
+                    else:
+                        # For other strings, clear the field (set to None)
+                        setattr(instance, field_name, None)
+                elif hasattr(request.FILES, field_name):
+                    # Handle file upload if present
+                    setattr(instance, field_name, request.FILES[field_name])
+                else:
+                    # If no value provided, don't change the field
+                    pass
+
+        # Handle other data fields
+        data_to_update = {}
+        for field_name, value in request.data.items():
+            if field_name not in url_fields:  # Skip URL/file fields already handled
+                data_to_update[field_name] = value
+
+        # Handle time fields specifically - convert empty strings to None
+        time_fields = ['opening_hours', 'closing_hours']
+        for field_name in time_fields:
+            if field_name in data_to_update:
+                value = data_to_update[field_name]
+                if value == "" or value is None:
+                    data_to_update[field_name] = None
+
+        # Update other fields
+        for field_name, value in data_to_update.items():
+            if hasattr(instance, field_name):
+                setattr(instance, field_name, value)
+
+        instance.save()
+
+        # Return updated data
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
 
 
 class VendorVerificationStatusView(APIView):

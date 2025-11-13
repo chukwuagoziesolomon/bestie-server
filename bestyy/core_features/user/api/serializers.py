@@ -1,5 +1,6 @@
 from rest_framework import serializers
-from bestyy.core_features.user.models import Order, CourierProfile
+from bestyy.restaurant_features.order.models import Order
+from bestyy.core_features.user.models import CourierProfile
 
 
 class DeliverySerializer(serializers.ModelSerializer):
@@ -13,7 +14,7 @@ class DeliverySerializer(serializers.ModelSerializer):
         model = Order
         fields = [
             'id', 'order_number', 'customer_name', 'pickup_address', 'delivery_address',
-            'total_price', 'amount_display', 'status', 'status_display',
+            'total_amount', 'amount_display', 'status', 'status_display',
             'created_at', 'delivered_at', 'delivery_time_minutes', 'delivery_time_display'
         ]
         read_only_fields = fields
@@ -26,7 +27,7 @@ class DeliverySerializer(serializers.ModelSerializer):
     
     def get_amount_display(self, obj):
         """Format amount as currency"""
-        return f"₦{float(obj.total_price or 0):,.2f}"
+        return f"₦{float(obj.total_amount or 0):,.2f}"
 
 
 # DailyStatsSerializer removed - stats calculated on-demand

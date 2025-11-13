@@ -6,7 +6,8 @@ from django.db.models import Sum, Count, Avg
 from django.utils import timezone
 from datetime import timedelta
 
-from bestyy.core_features.user.models import VendorProfile, Order
+from bestyy.core_features.user.models import VendorProfile
+from bestyy.restaurant_features.order.models import Order
 
 
 class VendorPopularityUpdateService:
@@ -32,7 +33,7 @@ class VendorPopularityUpdateService:
         total_revenue = Order.objects.filter(
             vendor=vendor,
             status='completed'
-        ).aggregate(total=Sum('total_price'))['total'] or 0
+        ).aggregate(total=Sum('total_amount'))['total'] or 0
         
         # Calculate recent activity (orders in last 30 days)
         thirty_days_ago = timezone.now() - timedelta(days=30)
@@ -63,8 +64,8 @@ class VendorPopularityUpdateService:
             'recent_orders': recent_orders,
             'orders_last_7_days': orders_last_7_days,
             'popularity_score': popularity_score,
-            'is_featured': vendor.is_featured,
-            'featured_priority': vendor.featured_priority,
+            'is_featured': getattr(vendor, 'is_featured', False),
+            'featured_priority': getattr(vendor, 'featured_priority', 0),
             'verification_status': vendor.verification_status,
             'is_suspended': vendor.is_suspended,
         }

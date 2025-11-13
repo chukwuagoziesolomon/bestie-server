@@ -6,7 +6,7 @@ from django.utils import timezone
 from django.db.models import Q, Count, Avg, F, ExpressionWrapper, DurationField
 from datetime import timedelta
 
-from bestyy.core_features.user.models import Order
+from bestyy.restaurant_features.order.models import Order
 from bestyy.core_features.user.api.serializers import DeliverySerializer
 
 class CourierDeliveriesView(APIView):
@@ -50,7 +50,7 @@ class CourierDeliveriesView(APIView):
         
         # Calculate additional metrics BEFORE applying limit
         total_deliveries = deliveries.count()
-        total_earnings = sum(delivery.total_price for delivery in deliveries if delivery.total_price)
+        total_earnings = sum(delivery.total_amount for delivery in deliveries if delivery.total_amount)
         
         # Calculate average delivery time for completed deliveries BEFORE applying limit
         completed_deliveries = deliveries.filter(

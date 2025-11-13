@@ -4,7 +4,8 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.conf import settings
 from django.utils import timezone
-from bestyy.core_features.user.models import Order, Payment
+from bestyy.core_features.user.models import Payment
+from bestyy.restaurant_features.order.models import Order
 from decimal import Decimal
 import json
 import hmac
@@ -272,6 +273,16 @@ def paystack_webhook(request):
             return handle_transfer_failed(data)
         elif event == 'transfer.reversed':
             return handle_transfer_reversed(data)
+        elif event == 'subscription.create':
+            return handle_subscription_create(data)
+        elif event == 'subscription.disable':
+            return handle_subscription_disable(data)
+        elif event == 'invoice.create':
+            return handle_invoice_create(data)
+        elif event == 'invoice.payment_failed':
+            return handle_invoice_payment_failed(data)
+        elif event == 'invoice.update':
+            return handle_invoice_update(data)
         else:
             logger.info(f"Unhandled Paystack event: {event}")
             return Response({'status': 'ignored'})
@@ -328,6 +339,50 @@ def handle_charge_success(data):
 
                     # Send receipt to user
                     _send_payment_receipt(order)
+
+                    # Broadcast payment confirmation via WebSocket
+                    from bestyy.core_features.user.services.order_status_broadcast_service import OrderStatusBroadcastService
+                    OrderStatusBroadcastService.broadcast_payment_confirmed(order)
+
+                    # Notify vendor about new order
+                    from bestyy.core_features.user.services.vendor_order_notification_service import VendorOrderNotificationService
+                    VendorOrderNotificationService.notify_vendor_new_order(order)
+
+                    # Find and assign nearby courier
+                    from bestyy.core_features.user.services.courier_location_service import CourierLocationService
+                    try:
+                        # Get delivery location coordinates (you'll need to geocode the address)
+                        # For now, using Lagos coordinates as example - replace with actual geocoding
+                        delivery_lat = 6.5244  # Lagos latitude
+                        delivery_lon = 3.3792  # Lagos longitude
+
+                        # Find nearby couriers
+                        nearby_couriers = CourierLocationService.find_nearby_couriers(
+                            delivery_lat, delivery_lon,
+                            max_distance_km=15.0,
+                            max_results=3,
+                            require_active=True,
+                            require_verified=True
+                        )
+
+                        if nearby_couriers:
+                            # Assign the closest courier
+                            closest_courier, distance = nearby_couriers[0]
+                            order.courier = closest_courier
+                            order.save()
+
+                            logger.info(f"Assigned courier {closest_courier.id} to order {order.id} (distance: {distance:.2f}km)")
+
+                            # Send notification to assigned courier
+                            _send_code_notifications(order)
+
+                            # Broadcast courier assignment via WebSocket
+                            OrderStatusBroadcastService.broadcast_new_delivery_request(order, nearby_couriers)
+                        else:
+                            logger.warning(f"No nearby couriers found for order {order.id}")
+
+                    except Exception as e:
+                        logger.error(f"Error assigning courier to order {order.id}: {str(e)}")
 
                     logger.info(f"Order payment confirmed: Order #{order.id}, amount: ₦{amount}")
 
@@ -552,4 +607,175 @@ def handle_transfer_reversed(data):
 
     except Exception as e:
         logger.error(f"Error handling transfer reversed: {str(e)}")
+        return Response({'error': 'Processing error'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+def handle_subscription_create(data):
+    """
+    Handle subscription creation
+    """
+    try:
+        subscription_code = data.get('subscription_code')
+        customer_code = data.get('customer', {}).get('customer_code')
+        plan_code = data.get('plan', {}).get('plan_code')
+
+        logger.info(f"Subscription created: {subscription_code} for customer {customer_code}")
+
+        # Find vendor by customer code and create/update subscription record
+        try:
+            from bestyy.core_features.user.models import VendorSubscription, VendorProfile, SubscriptionPlan
+
+            # Find vendor by customer code (this might need adjustment based on how you store customer codes)
+            # For now, we'll assume we can find it through the subscription data
+            # You might need to store customer_code in VendorSubscription model
+
+            # This is a placeholder - you'll need to implement the logic to find the vendor
+            # based on the customer_code or other identifying information
+
+            logger.info(f"Subscription creation handled for: {subscription_code}")
+
+        except Exception as e:
+            logger.error(f"Error updating subscription record: {str(e)}")
+
+        return Response({'status': 'success'})
+
+    except Exception as e:
+        logger.error(f"Error handling subscription create: {str(e)}")
+        return Response({'error': 'Processing error'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+def handle_subscription_disable(data):
+    """
+    Handle subscription disable/cancellation
+    """
+    try:
+        subscription_code = data.get('subscription_code')
+
+        logger.info(f"Subscription disabled: {subscription_code}")
+
+        # Find and update subscription record
+        try:
+            from bestyy.core_features.user.models import VendorSubscription
+
+            subscription = VendorSubscription.objects.get(paystack_subscription_code=subscription_code)
+            subscription.cancel_subscription()
+
+            # Remove featured status
+            vendor = subscription.vendor
+            vendor.is_featured = False
+            vendor.featured_priority = 0
+            vendor.save()
+
+            logger.info(f"Subscription cancelled for vendor {vendor.id}")
+
+        except VendorSubscription.DoesNotExist:
+            logger.warning(f"Subscription not found: {subscription_code}")
+        except Exception as e:
+            logger.error(f"Error updating subscription: {str(e)}")
+
+        return Response({'status': 'success'})
+
+    except Exception as e:
+        logger.error(f"Error handling subscription disable: {str(e)}")
+        return Response({'error': 'Processing error'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+def handle_invoice_create(data):
+    """
+    Handle invoice creation (subscription payment attempt)
+    """
+    try:
+        subscription_code = data.get('subscription', {}).get('subscription_code')
+        invoice_code = data.get('invoice_code')
+        amount = data.get('amount', 0) / 100  # Convert from kobo
+
+        logger.info(f"Invoice created: {invoice_code} for subscription {subscription_code}, amount: ₦{amount}")
+
+        # Update subscription next payment date if available
+        try:
+            from bestyy.core_features.user.models import VendorSubscription
+
+            subscription = VendorSubscription.objects.get(paystack_subscription_code=subscription_code)
+            # Update next payment date from invoice data if available
+            # This might require additional logic based on Paystack's invoice structure
+
+        except VendorSubscription.DoesNotExist:
+            logger.warning(f"Subscription not found for invoice: {subscription_code}")
+        except Exception as e:
+            logger.error(f"Error updating subscription for invoice: {str(e)}")
+
+        return Response({'status': 'success'})
+
+    except Exception as e:
+        logger.error(f"Error handling invoice create: {str(e)}")
+        return Response({'error': 'Processing error'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+def handle_invoice_payment_failed(data):
+    """
+    Handle failed subscription payment
+    """
+    try:
+        subscription_code = data.get('subscription', {}).get('subscription_code')
+        invoice_code = data.get('invoice_code')
+        reason = data.get('description', 'Payment failed')
+
+        logger.warning(f"Invoice payment failed: {invoice_code} for subscription {subscription_code} - {reason}")
+
+        # Update subscription status to attention
+        try:
+            from bestyy.core_features.user.models import VendorSubscription
+
+            subscription = VendorSubscription.objects.get(paystack_subscription_code=subscription_code)
+            subscription.status = 'attention'
+            subscription.save()
+
+            logger.info(f"Subscription {subscription_code} marked as attention due to payment failure")
+
+        except VendorSubscription.DoesNotExist:
+            logger.warning(f"Subscription not found for failed invoice: {subscription_code}")
+        except Exception as e:
+            logger.error(f"Error updating subscription for failed payment: {str(e)}")
+
+        return Response({'status': 'success'})
+
+    except Exception as e:
+        logger.error(f"Error handling invoice payment failed: {str(e)}")
+        return Response({'error': 'Processing error'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+def handle_invoice_update(data):
+    """
+    Handle invoice update (payment status change)
+    """
+    try:
+        subscription_code = data.get('subscription', {}).get('subscription_code')
+        invoice_code = data.get('invoice_code')
+        paid = data.get('paid', False)
+
+        if paid:
+            logger.info(f"Invoice payment successful: {invoice_code} for subscription {subscription_code}")
+
+            # Update subscription status back to active if it was in attention
+            try:
+                from bestyy.core_features.user.models import VendorSubscription
+
+                subscription = VendorSubscription.objects.get(paystack_subscription_code=subscription_code)
+                if subscription.status == 'attention':
+                    subscription.status = 'active'
+                    subscription.save()
+
+                    logger.info(f"Subscription {subscription_code} reactivated after successful payment")
+
+            except VendorSubscription.DoesNotExist:
+                logger.warning(f"Subscription not found for successful invoice: {subscription_code}")
+            except Exception as e:
+                logger.error(f"Error updating subscription for successful payment: {str(e)}")
+        else:
+            logger.info(f"Invoice updated (not paid): {invoice_code} for subscription {subscription_code}")
+
+        return Response({'status': 'success'})
+
+    except Exception as e:
+        logger.error(f"Error handling invoice update: {str(e)}")
         return Response({'error': 'Processing error'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

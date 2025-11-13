@@ -17,6 +17,12 @@ from urllib.parse import urlparse, parse_qs, urlencode
 
 # Import the view for social login test
 from bestyy.core_features.user.views import social_login_test
+# Import verification views
+from bestyy.core_features.user.api.verification_views import (
+    verify_whatsapp_signup,
+    resend_whatsapp_verification_code,
+    check_verification_status
+)
 # Temporarily disabled allauth imports
 # from user.api.social_views import GoogleLogin, GoogleSignup, GoogleConnect, CompleteProfile
 from django.views.generic import RedirectView
@@ -49,6 +55,14 @@ Keeps existing redirects and compatibility paths intact below.
 urlpatterns = [
     # Consolidated admin endpoints
     path('', include('bestyy.adminpanel.urls')),
+    
+    # Authentication endpoints - IMPORTANT: These must come before other API includes
+    # Public alias for WhatsApp signup verification
+    path('api/auth/verify-whatsapp-signup/', verify_whatsapp_signup, name='verify_whatsapp_signup'),
+    # Resend WhatsApp verification code endpoint
+    path('api/auth/resend-verification-code/', resend_whatsapp_verification_code, name='resend_whatsapp_verification_code'),
+    # Check verification status endpoint
+    path('api/auth/verification-status/', check_verification_status, name='check_verification_status'),
     
     # Authentication endpoints (temporarily disabled allauth)
     # path('api/auth/', include('dj_rest_auth.urls')),  # Removed email/password login endpoints

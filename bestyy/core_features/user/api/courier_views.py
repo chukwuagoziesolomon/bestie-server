@@ -13,7 +13,8 @@ from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q, Count, Case, When, IntegerField, Avg, Value, FloatField
 
 # Use absolute imports to avoid relative import issues
-from bestyy.core_features.user.models import CourierProfile, Order
+from bestyy.core_features.user.models import CourierProfile
+from bestyy.restaurant_features.order.models import Order
 from bestyy.core_features.user.serializers.courier_serializers import (
     CourierListSerializer,
     CourierProfileSerializer,

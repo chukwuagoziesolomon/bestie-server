@@ -6,7 +6,7 @@ from django.db.models import Sum, Count
 from datetime import timedelta, date
 import calendar
 
-from user.models import Order
+from bestyy.restaurant_features.order.models import Order
 
 
 class VendorSalesChartView(APIView):
@@ -31,7 +31,12 @@ class VendorSalesChartView(APIView):
                 status=403
             )
         
-        vendor = user.vendor_profile
+        vendor = getattr(user, 'vendor_profile', None)
+        if not vendor:
+            return Response(
+                {"detail": "Vendor profile not found."},
+                status=404
+            )
         
         # Get query parameters
         month = int(request.query_params.get('month', timezone.now().month))
@@ -78,7 +83,7 @@ class VendorSalesChartView(APIView):
             )
         
         # Calculate summary statistics
-        total_sales = vendor_orders.aggregate(total=Sum('total_price'))['total'] or 0
+        total_sales = vendor_orders.aggregate(total=Sum('total_amount'))['total'] or 0
         total_orders = vendor_orders.count()
         avg_order_value = total_sales / total_orders if total_orders > 0 else 0
         
@@ -119,7 +124,7 @@ class VendorSalesChartView(APIView):
         
         while current_date <= end_date:
             day_orders = vendor_orders.filter(created_at__date=current_date)
-            day_sales = day_orders.aggregate(total=Sum('total_price'))['total'] or 0
+            day_sales = day_orders.aggregate(total=Sum('total_amount'))['total'] or 0
             daily_sales_map[current_date.day] = float(day_sales)
             all_sales.append(float(day_sales))
             current_date += timedelta(days=1)
@@ -160,7 +165,7 @@ class VendorSalesChartView(APIView):
             week_orders = vendor_orders.filter(
                 created_at__date__range=(current_date, week_end)
             )
-            week_sales = week_orders.aggregate(total=Sum('total_price'))['total'] or 0
+            week_sales = week_orders.aggregate(total=Sum('total_amount'))['total'] or 0
             
             chart_data.append({
                 "x": f"Week {week_number}",
@@ -192,7 +197,7 @@ class VendorSalesChartView(APIView):
             month_orders = vendor_orders.filter(
                 created_at__date__range=(month_start, month_end)
             )
-            month_sales = month_orders.aggregate(total=Sum('total_price'))['total'] or 0
+            month_sales = month_orders.aggregate(total=Sum('total_amount'))['total'] or 0
             
             chart_data.append({
                 "x": calendar.month_abbr[month],
@@ -243,14 +248,14 @@ class VendorSalesChartView(APIView):
             vendor=vendor,
             created_at__date__range=(prev_start, prev_end)
         )
-        prev_sales = prev_orders.aggregate(total=Sum('total_price'))['total'] or 0
+        prev_sales = prev_orders.aggregate(total=Sum('total_amount'))['total'] or 0
         
         # Get current period sales
         current_orders = Order.objects.filter(
             vendor=vendor,
             created_at__date__range=(start_date, end_date)
         )
-        current_sales = current_orders.aggregate(total=Sum('total_price'))['total'] or 0
+        current_sales = current_orders.aggregate(total=Sum('total_amount'))['total'] or 0
         
         # Calculate percentage change
         if prev_sales > 0:

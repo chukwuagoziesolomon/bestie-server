@@ -47,3 +47,31 @@ clarify as "fixed payout" where needed.
 *Note: All legacy references to split/subaccount logic and variable names are being phased out. Remember to run a database migration for the SubAccount model field change (`percentage_charge` to `fixed_payout_amount`) if not already done.*
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -13,7 +13,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView
 
-from bestyy.core_features.user.models import VendorProfile, SubscriptionPlan
+from bestyy.core_features.user.models import VendorProfile
 from bestyy.core_features.user.permissions import IsAdminUser
 
 logger = logging.getLogger(__name__)
@@ -288,24 +288,12 @@ class FeaturedVendorManagementView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Get or create Pro subscription plan
-        pro_plan, created = SubscriptionPlan.objects.get_or_create(
-            plan_type='pro',
-            defaults={
-                'name': 'Pro Plan (Featured)',
-                'price': 5000.00,
-                'currency': 'NGN',
-                'duration_days': duration_days,
-                'is_active': True
-            }
-        )
-
-        # Update vendor
+        # Update vendor (subscription models removed)
         now = timezone.now()
-        vendor.is_featured = True
-        vendor.featured_priority = priority
-        vendor.featured_expiry = now + timedelta(days=duration_days)
-        vendor.subscription_plan = pro_plan
+        # vendor.is_featured = True
+        # vendor.featured_priority = priority
+        # vendor.featured_expiry = now + timedelta(days=duration_days)
+        # vendor.subscription_plan = pro_plan
         vendor.save()
 
         logger.info(f"Vendor {vendor.id} ({vendor.business_name}) made featured by {request.user.email}")
@@ -316,15 +304,10 @@ class FeaturedVendorManagementView(APIView):
             'vendor': {
                 'id': vendor.id,
                 'business_name': vendor.business_name,
-                'is_featured': vendor.is_featured,
-                'featured_priority': vendor.featured_priority,
-                'featured_expiry': vendor.featured_expiry.isoformat(),
-                'subscription_plan': {
-                    'id': pro_plan.id,
-                    'name': pro_plan.name,
-                    'price': float(pro_plan.price),
-                    'currency': pro_plan.currency,
-                }
+                # 'is_featured': vendor.is_featured,
+                # 'featured_priority': vendor.featured_priority,
+                # 'featured_expiry': vendor.featured_expiry.isoformat(),
+                # 'subscription_plan': None
             }
         }, status=status.HTTP_200_OK)
 

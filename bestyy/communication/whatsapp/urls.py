@@ -1,6 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from . import views
+from .webhooks import whatsapp_verification_webhook
 from .api_views import (
     ConversationListView,
     ConversationDetailView,
@@ -19,8 +20,9 @@ from .cors_test_views import cors_test
 app_name = 'whatsapp_ai'
 
 urlpatterns = [
-    # Webhook endpoint (no authentication required)
+    # Webhook endpoints (no authentication required)
     path('webhook/', views.whatsapp_webhook, name='webhook'),
+    path('webhook/verification/', whatsapp_verification_webhook, name='verification_webhook'),
     
     # Conversation management
     path('conversations/', ConversationListView.as_view(), name='conversation-list'),

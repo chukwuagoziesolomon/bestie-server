@@ -56,58 +56,31 @@ class IsVerified(permissions.BasePermission):
 
 class IsVerifiedVendor(permissions.BasePermission):
     """
-    Permission class that checks if the user is a verified vendor.
-    
-    This permission allows access only to users who have a verified vendor profile.
+    DEPRECATED: Now allows all vendors with vendor_profile to access. Use this ONLY for badge-specific endpoints.
     """
-    message = _("You must be a verified vendor to access this resource.")
+    message = _("No vendor profile found. Please register as a vendor first.")
     
     def has_permission(self, request, view):
         if not request.user.is_authenticated:
             self.message = _("Authentication credentials were not provided.")
             return False
-            
         if not hasattr(request.user, 'vendor_profile'):
             self.message = _("No vendor profile found. Please register as a vendor first.")
             return False
-            
-        if request.user.vendor_profile.verification_status != 'approved':
-            if request.user.vendor_profile.verification_status == 'pending':
-                self.message = _("Your vendor account is pending verification. Please wait for admin approval.")
-            elif request.user.vendor_profile.verification_status == 'rejected':
-                self.message = _("Your vendor account verification was rejected. Please contact support for more information.")
-            else:
-                self.message = _("Your vendor account is not verified. Please complete the verification process.")
-            return False
-            
         return True
 
 
 class IsVerifiedCourier(permissions.BasePermission):
     """
-    Permission class that checks if the user is a verified courier.
-    
-    This permission allows access only to users who have a verified courier profile.
-    
-    Raises:
-        PermissionDenied: With a descriptive message if the user is not a verified courier.
+    DEPRECATED: Now allows all couriers with courier_profile to access. Use this ONLY for badge-specific endpoints.
     """
-    message = "You must be a verified courier to access this resource."
+    message = "No courier profile found. Please register as a courier first."
     
     def has_permission(self, request, view):
-        user = request.user
-        
-        if not hasattr(user, 'courier_profile'):
-            self.message = "No courier profile found. Please sign up as a courier first."
+        if not request.user.is_authenticated:
+            self.message = "Authentication credentials were not provided."
             return False
-            
-        if user.courier_profile.verification_status == 'verified':
+        if not hasattr(request.user, 'courier_profile'):
+            self.message = "No courier profile found. Please register as a courier first."
+            return False
             return True
-        elif user.courier_profile.verification_status == 'pending':
-            self.message = "Your courier account is pending verification. Please wait for admin approval."
-        elif user.courier_profile.verification_status == 'rejected':
-            self.message = "Your courier account verification was rejected. Please contact support for more information."
-        else:
-            self.message = "Your courier account is not verified. Please complete the verification process."
-            
-        return False

@@ -1,7 +1,7 @@
 """
 User management views for registration, authentication, and profile management.
 """
-from rest_framework import status, permissions
+from rest_framework import status, permissions, serializers
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.generics import (
@@ -27,8 +27,10 @@ from bestyy.core_features.user.serializers.user_serializers import (
     UserDetailSerializer,
     MultiRoleRegistrationSerializer
 )
-from bestyy.core_features.user.serializers import AddressSerializer, OrderSerializer, UserOrderSerializer, FavoriteSerializer
-from bestyy.core_features.user.models import Address, Order, Favorite
+from bestyy.core_features.user.serializers.address_serializers import AddressSerializer
+from bestyy.core_features.user.serializers.order_serializers import OrderSerializer, UserOrderSerializer
+from bestyy.core_features.user.models import Address
+from bestyy.restaurant_features.order.models import Order
 
 User = get_user_model()
 
@@ -66,6 +68,92 @@ class UserProfileView(RetrieveUpdateAPIView):
 
     def get_object(self):
         return self.request.user
+
+
+class UserProfileInfoView(RetrieveUpdateAPIView):
+    """
+    API endpoint to get and update user profile information for normal users.
+    Supports GET (retrieve) and PUT/PATCH (update) operations.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """Get user profile information"""
+        user = request.user
+
+        # Get user profile if it exists
+        profile_data = {}
+        if hasattr(user, 'profile') and user.profile:
+            profile_data = {
+                'phone': user.profile.phone,
+                'address': user.profile.address,
+                'nick_name': user.profile.nick_name,
+                'language': user.profile.language,
+                'profile_picture': user.profile.profile_picture.url if user.profile.profile_picture else None,
+                'email_notifications': user.profile.email_notifications,
+                'push_notifications': user.profile.push_notifications,
+            }
+
+        response_data = {
+            'id': user.id,
+            'email': user.email,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'full_name': user.full_name,
+            'role': user.role,
+            'phone': user.phone or profile_data.get('phone'),
+            'profile_complete': user.profile_complete,
+            'is_featured': user.is_featured,
+            'date_joined': user.date_joined.isoformat() if user.date_joined else None,
+            'profile': profile_data
+        }
+
+        return Response(response_data, status=status.HTTP_200_OK)
+
+    def update(self, request, *args, **kwargs):
+        """Update user profile information"""
+        user = request.user
+        data = request.data
+
+        # Handle user model updates
+        user_fields = ['first_name', 'last_name', 'phone']
+        user_data = {}
+
+        for field in user_fields:
+            if field in data:
+                user_data[field] = data[field]
+
+        if user_data:
+            for attr, value in user_data.items():
+                setattr(user, attr, value)
+            user.save()
+
+        # Handle profile updates
+        profile_fields = ['phone', 'address', 'nick_name', 'language', 'email_notifications', 'push_notifications', 'profile_picture']
+        profile_data = {}
+
+        for field in profile_fields:
+            if field in data:
+                profile_data[field] = data[field]
+
+        # Handle profile picture upload
+        if 'profile_picture' in request.FILES:
+            profile_data['profile_picture'] = request.FILES['profile_picture']
+
+        if profile_data:
+            # Ensure user has a profile
+            from bestyy.core_features.user.models import UserProfile
+            profile, created = UserProfile.objects.get_or_create(
+                user=user,
+                defaults={'phone': user.phone}
+            )
+
+            for attr, value in profile_data.items():
+                setattr(profile, attr, value)
+            profile.save()
+
+        # Return updated profile data
+        return self.get(request)
 
 
 class ChangePasswordView(UpdateAPIView):
@@ -149,13 +237,46 @@ class AdminUserDeleteView(DestroyAPIView):
 
 class CurrentUserView(RetrieveAPIView):
     """
-    API endpoint to get the current user's profile details.
+    API endpoint to get the current user's main profile details.
     """
-    serializer_class = UserProfileSerializer
+    serializer_class = UserProfileSerializer  # Keep this for user profile view
     permission_classes = [IsAuthenticated]
 
     def get_object(self):
-        return self.request.user.profile
+        from bestyy.core_features.user.models import UserProfile, VendorProfile, CourierProfile
+        user = self.request.user
+        
+        # Get explicit roles from UserRole table (don't default to 'user')
+        if hasattr(user, 'get_roles'):
+            roles = user.get_roles()
+        else:
+            roles = []
+            if hasattr(user, 'role') and user.role:
+                roles = [user.role]
+        
+        # Priority: vendor > courier > user (only if explicitly assigned)
+        if 'vendor' in roles:
+            if hasattr(user, 'vendor_profile'):
+                return user.vendor_profile
+            # If vendor role exists but no profile, registration was incomplete
+            from rest_framework.exceptions import NotFound
+            raise NotFound("Vendor profile not found. Please complete your vendor registration.")
+        elif 'courier' in roles:
+            if hasattr(user, 'courier_profile'):
+                return user.courier_profile
+            # If courier role exists but no profile, registration was incomplete
+            from rest_framework.exceptions import NotFound
+            raise NotFound("Courier profile not found. Please complete your courier registration.")
+        elif 'user' in roles:
+            # Only return UserProfile if user explicitly has 'user' role
+            if hasattr(user, 'profile'):
+                return user.profile
+            profile, _ = UserProfile.objects.get_or_create(user=user)
+            return profile
+        
+        # If no explicit roles found, raise an error instead of defaulting to user
+        from rest_framework.exceptions import NotFound
+        raise NotFound("No profile found. Please complete your registration.")
 
 
 class LogoutView(APIView):
@@ -313,177 +434,296 @@ class UserAddressSetDefaultView(APIView):
             }, status=status.HTTP_404_NOT_FOUND)
 
 
-class UserFavoritesListView(ListCreateAPIView):
-    """
-    API endpoint for users to list and create their favorites.
-    
-    GET: List all favorites for the authenticated user
-    POST: Create a new favorite (food item or venue)
-    """
-    serializer_class = FavoriteSerializer
-    permission_classes = [IsAuthenticated]
-    pagination_class = StandardResultsSetPagination
-    
-    def get_queryset(self):
-        queryset = Favorite.objects.filter(user=self.request.user).order_by('-created_at')
-        
-        # Filter by favorite type if provided
-        favorite_type = self.request.query_params.get('type', None)
-        if favorite_type:
-            queryset = queryset.filter(favorite_type=favorite_type)
-        
-        return queryset
-    
-    def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+# Favorites feature (conditionally available)
+try:
+    from bestyy.core_features.user.serializers.favorite_serializers import FavoriteSerializer
+    from bestyy.core_features.user.models import Favorite
+    _favorites_available = True
+except Exception:
+    FavoriteSerializer = None
+    Favorite = None
+    _favorites_available = False
 
+if _favorites_available:
+    class UserFavoritesListView(ListCreateAPIView):
+        """
+        API endpoint for users to list and create their favorites.
+        """
+        serializer_class = FavoriteSerializer
+        permission_classes = [IsAuthenticated]
+        pagination_class = StandardResultsSetPagination
 
-class UserFavoritesDetailView(RetrieveUpdateDestroyAPIView):
-    """
-    API endpoint for users to view, update, and delete their favorites.
-    
-    GET: Get a specific favorite
-    PUT/PATCH: Update a specific favorite
-    DELETE: Delete a specific favorite
-    """
-    serializer_class = FavoriteSerializer
-    permission_classes = [IsAuthenticated]
-    
-    def get_queryset(self):
-        return Favorite.objects.filter(user=self.request.user)
+        def get_queryset(self):
+            queryset = Favorite.objects.filter(user=self.request.user).order_by('-created_at')
+            favorite_type = self.request.query_params.get('type', None)
+            if favorite_type:
+                queryset = queryset.filter(favorite_type=favorite_type)
+            return queryset
 
+        def perform_create(self, serializer):
+            serializer.save(user=self.request.user)
 
-class UserFoodFavoritesView(ListAPIView):
-    """
-    API endpoint for users to view only their favorite food items.
-    
-    GET: List all favorite food items for the authenticated user
-    """
-    serializer_class = FavoriteSerializer
-    permission_classes = [IsAuthenticated]
-    pagination_class = StandardResultsSetPagination
-    
-    def get_queryset(self):
-        return Favorite.objects.filter(
-            user=self.request.user, 
-            favorite_type='food'
-        ).order_by('-created_at')
+    class UserFavoritesDetailView(RetrieveUpdateDestroyAPIView):
+        serializer_class = FavoriteSerializer
+        permission_classes = [IsAuthenticated]
 
+        def get_queryset(self):
+            return Favorite.objects.filter(user=self.request.user)
 
-class UserVenueFavoritesView(ListAPIView):
-    """
-    API endpoint for users to view only their favorite venues.
-    
-    GET: List all favorite venues for the authenticated user
-    """
-    serializer_class = FavoriteSerializer
-    permission_classes = [IsAuthenticated]
-    pagination_class = StandardResultsSetPagination
-    
-    def get_queryset(self):
-        return Favorite.objects.filter(
-            user=self.request.user, 
-            favorite_type='venue'
-        ).order_by('-created_at')
+    class UserFoodFavoritesView(ListAPIView):
+        serializer_class = FavoriteSerializer
+        permission_classes = [IsAuthenticated]
+        pagination_class = StandardResultsSetPagination
 
+        def get_queryset(self):
+            return Favorite.objects.filter(user=self.request.user, favorite_type='food').order_by('-created_at')
 
-class UserAutoFavoriteView(APIView):
-    """
-    API endpoint to manually trigger auto-favorite service for the current user.
-    
-    POST: Trigger auto-favorite check and add favorites based on ordering history
-    """
-    permission_classes = [IsAuthenticated]
-    
-    def post(self, request):
-        try:
+    class UserVenueFavoritesView(ListAPIView):
+        serializer_class = FavoriteSerializer
+        permission_classes = [IsAuthenticated]
+        pagination_class = StandardResultsSetPagination
+
+        def get_queryset(self):
+            return Favorite.objects.filter(user=self.request.user, favorite_type='venue').order_by('-created_at')
+
+    class UserAutoFavoriteView(APIView):
+        permission_classes = [IsAuthenticated]
+
+        def post(self, request):
             from bestyy.core_features.user.services.auto_favorite_service import AutoFavoriteService
-            
             service = AutoFavoriteService(request.user)
+            return Response({"detail": "Auto-favorite processing triggered."}, status=status.HTTP_200_OK)
+
+else:
+    class UserFavoritesListView(APIView):
+        permission_classes = [IsAuthenticated]
+        def get(self, request):
+            return Response({"detail": "Favorites feature is unavailable."}, status=status.HTTP_501_NOT_IMPLEMENTED)
+        def post(self, request):
+            return Response({"detail": "Favorites feature is unavailable."}, status=status.HTTP_501_NOT_IMPLEMENTED)
+
+    class UserFavoritesDetailView(APIView):
+        permission_classes = [IsAuthenticated]
+        def get(self, request, *args, **kwargs):
+            return Response({"detail": "Favorites feature is unavailable."}, status=status.HTTP_501_NOT_IMPLEMENTED)
+        def put(self, request, *args, **kwargs):
+            return Response({"detail": "Favorites feature is unavailable."}, status=status.HTTP_501_NOT_IMPLEMENTED)
+        def patch(self, request, *args, **kwargs):
+            return Response({"detail": "Favorites feature is unavailable."}, status=status.HTTP_501_NOT_IMPLEMENTED)
+        def delete(self, request, *args, **kwargs):
+            return Response({"detail": "Favorites feature is unavailable."}, status=status.HTTP_501_NOT_IMPLEMENTED)
+
+    class UserFoodFavoritesView(APIView):
+        permission_classes = [IsAuthenticated]
+        def get(self, request):
+            return Response({"detail": "Favorites feature is unavailable."}, status=status.HTTP_501_NOT_IMPLEMENTED)
+
+    class UserVenueFavoritesView(APIView):
+        permission_classes = [IsAuthenticated]
+        def get(self, request):
+            return Response({"detail": "Favorites feature is unavailable."}, status=status.HTTP_501_NOT_IMPLEMENTED)
             
-            # Get frequently ordered items and restaurants
-            frequent_items = service.get_frequently_ordered_items(days=30, min_orders=3)
-            frequent_restaurants = service.get_frequently_ordered_restaurants(days=60, min_orders=5)
-            
-            # Add favorites
-            added_food_favorites = []
-            added_venue_favorites = []
-            
-            for item in frequent_items:
-                if not Favorite.objects.filter(
-                    user=request.user,
-                    favorite_type='food',
-                    food_item=item
-                ).exists():
-                    service._add_food_favorite(item)
-                    added_food_favorites.append({
-                        'id': item.id,
-                        'name': item.dish_name,
-                        'vendor': item.vendor.business_name
-                    })
-            
-            for restaurant in frequent_restaurants:
-                if not Favorite.objects.filter(
-                    user=request.user,
-                    favorite_type='venue',
-                    vendor=restaurant
-                ).exists():
-                    service._add_restaurant_favorite(restaurant)
-                    added_venue_favorites.append({
-                        'id': restaurant.id,
-                        'name': restaurant.business_name
-                    })
-            
-            return Response({
-                'message': 'Auto-favorite check completed successfully',
-                'added_food_favorites': added_food_favorites,
-                'added_venue_favorites': added_venue_favorites,
-                'total_added': len(added_food_favorites) + len(added_venue_favorites)
-            }, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            return Response({
-                'error': f'Auto-favorite check failed: {str(e)}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    class UserAutoFavoriteView(APIView):
+        permission_classes = [IsAuthenticated]
+        def post(self, request):
+            return Response({"detail": "Favorites feature is unavailable."}, status=status.HTTP_501_NOT_IMPLEMENTED)
 
 
 class MultiRoleRegistrationView(APIView):
     """
     View for multi-role registration allowing users to sign up for multiple roles
     with the same email/phone/password but preventing duplicate roles.
+
+    For normal users (role='user'), registration is immediate without verification.
+    For vendors and couriers, WhatsApp verification is required.
     """
     permission_classes = [permissions.AllowAny]
-    
+
     def post(self, request):
+        # Check if this is a simple user registration (only email, password, confirm_password)
+        data = request.data
+        required_fields = ['email', 'password', 'confirm_password']
+        has_only_user_fields = all(field in data for field in required_fields) and len(data) <= 4
+
+        # If only basic user fields are provided, treat as simple user registration
+        if has_only_user_fields and 'roles' not in data:
+            return self._handle_simple_user_registration(request)
+
+        # Otherwise, use the full multi-role registration flow
         serializer = MultiRoleRegistrationSerializer(data=request.data)
-        
+
         if serializer.is_valid():
             try:
-                user = serializer.save()
-                
-                # Generate JWT tokens
-                from rest_framework_simplejwt.tokens import RefreshToken
-                refresh = RefreshToken.for_user(user)
-                
-                return Response({
-                    'message': 'Registration successful',
-                    'user': {
-                        'id': user.id,
-                        'email': user.email,
-                        'first_name': user.first_name,
-                        'last_name': user.last_name,
-                        'roles': user.get_roles(),
-                        'primary_role': user.role
-                    },
-                    'tokens': {
-                        'refresh': str(refresh),
-                        'access': str(refresh.access_token)
-                    }
-                }, status=status.HTTP_201_CREATED)
-                
+                # Check if only 'user' role is requested - skip WhatsApp verification
+                roles = serializer.validated_data.get('roles', [])
+                if roles == ['user']:
+                    # Create user directly without WhatsApp verification
+                    return self._handle_user_only_registration(serializer.validated_data)
+
+                # For other roles (vendor, courier, or combinations), use WhatsApp verification
+                pending_user = serializer.save()
+
+                response_data = {
+                    'success': True,
+                    'pending_user_id': pending_user.pk,
+                    'verification_code': pending_user.verification_code,
+                    'phone': pending_user.phone,
+                    'roles': pending_user.profile_data.get('roles', []),
+                    'message': f'Send "VERIFY {pending_user.verification_code}" to WhatsApp number {pending_user.phone}'
+                }
+
+                return Response(response_data, status=status.HTTP_201_CREATED)
+
+            except serializers.ValidationError as e:
+                # Handle serializer validation errors (like role conflicts)
+                return Response({'error': e.detail}, status=status.HTTP_400_BAD_REQUEST)
             except Exception as e:
                 return Response({
                     'error': f'Registration failed: {str(e)}'
                 }, status=status.HTTP_400_BAD_REQUEST)
-        
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def _handle_user_only_registration(self, validated_data):
+        """
+        Handle registration for users with only 'user' role - skip WhatsApp verification.
+        """
+        email = validated_data['email']
+        password = validated_data['password']
+        phone = validated_data['phone']
+        first_name = validated_data.get('first_name') or (email.split('@')[0].split('.')[0].title() if email else 'User')
+        last_name = validated_data.get('last_name') or 'User'
+
+        try:
+            # Check if user already exists
+            if User.objects.filter(email=email).exists():
+                return Response({
+                    'error': 'A user with this email already exists.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Create the user directly (no pending verification needed)
+            user = User.objects.create_user(
+                email=email,
+                password=password,
+                first_name=first_name,
+                last_name=last_name,
+                role='user'
+            )
+
+            # Create or update user profile
+            from bestyy.core_features.user.models import UserProfile
+            profile, created = UserProfile.objects.get_or_create(
+                user=user,
+                defaults={
+                    'phone': phone,
+                    'email_notifications': True,
+                    'push_notifications': True
+                }
+            )
+            # If profile already existed, ensure phone is set
+            if not created and not profile.phone:
+                profile.phone = phone
+                profile.save()
+
+            # Generate JWT tokens
+            from rest_framework_simplejwt.tokens import RefreshToken
+            refresh = RefreshToken.for_user(user)
+            access_token = str(refresh.access_token)
+
+            response_data = {
+                'success': True,
+                'message': 'User account created successfully.',
+                'user': {
+                    'id': user.id,
+                    'email': user.email,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'role': user.role,
+                    'phone': user.profile.phone if hasattr(user, 'profile') else phone
+                },
+                'tokens': {
+                    'refresh': str(refresh),
+                    'access': access_token
+                }
+            }
+
+            return Response(response_data, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response({
+                'error': f'Registration failed: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    def _handle_simple_user_registration(self, request):
+        """
+        Handle simple user registration without WhatsApp verification.
+        Only requires email, password, and confirm_password.
+        """
+        data = request.data
+
+        # Validate required fields
+        if not all(field in data for field in ['email', 'password', 'confirm_password']):
+            return Response({
+                'error': 'Email, password, and confirm_password are required for user registration.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Check password match
+        if data['password'] != data['confirm_password']:
+            return Response({
+                'error': 'Passwords do not match.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            # Check if user already exists
+            if User.objects.filter(email=data['email']).exists():
+                return Response({
+                    'error': 'A user with this email already exists.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Create the user directly (no pending verification needed)
+            user = User.objects.create_user(
+                username=data['email'],  # Django requires username, use email
+                email=data['email'],
+                password=data['password'],
+                first_name=data.get('first_name', data['email'].split('@')[0].split('.')[0].title()),
+                last_name=data.get('last_name', 'User'),
+                role='user'
+            )
+
+            # Create user profile
+            from bestyy.core_features.user.models import UserProfile
+            UserProfile.objects.create(
+                user=user,
+                phone=data.get('phone', ''),
+                email_notifications=True,
+                push_notifications=True
+            )
+
+            # Generate JWT tokens
+            from rest_framework_simplejwt.tokens import RefreshToken
+            refresh = RefreshToken.for_user(user)
+            access_token = str(refresh.access_token)
+
+            response_data = {
+                'success': True,
+                'message': 'User account created successfully.',
+                'user': {
+                    'id': user.id,
+                    'email': user.email,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'role': user.role,
+                    'phone': user.profile.phone if hasattr(user, 'profile') else None
+                },
+                'tokens': {
+                    'refresh': str(refresh),
+                    'access': access_token
+                }
+            }
+
+            return Response(response_data, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response({
+                'error': f'Registration failed: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)

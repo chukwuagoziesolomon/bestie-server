@@ -5,7 +5,8 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-from .models import Order, VendorProfile, UserProfile, CourierProfile, User, MenuItem
+from .models import VendorProfile, UserProfile, CourierProfile, User
+from bestyy.restaurant_features.order.models import Order
 from .utils.websocket_notifications import send_admin_notification
 import json
 from django.db import models
@@ -31,17 +32,27 @@ def send_activity_update(activity_data):
 def order_created_handler(sender, instance, created, **kwargs):
     """Send real-time update when new order is created"""
     if created:
+        # Handle both authenticated and anonymous users
+        user_name = "Anonymous User"
+        user_email = "N/A"
+        user_id = None
+
+        if instance.customer and instance.customer.is_authenticated:
+            user_name = instance.customer.get_full_name() or instance.customer.username
+            user_email = instance.customer.email
+            user_id = instance.customer.id
+
         activity_data = {
             'id': f"order_{instance.id}",
             'type': 'order',
             'title': f"New Order #{instance.id}",
-            'description': f"{instance.user.get_full_name() or instance.user.username} ordered from {instance.vendor.business_name}",
-            'amount': float(instance.total_price),
+            'description': f"{user_name} ordered from {instance.vendor.business_name}",
+            'amount': float(instance.total_amount),
             'status': instance.status,
             'user': {
-                'id': instance.user.id,
-                'name': instance.user.get_full_name() or instance.user.username,
-                'email': instance.user.email
+                'id': user_id,
+                'name': user_name,
+                'email': user_email
             },
             'vendor': {
                 'id': instance.vendor.id,
@@ -280,25 +291,33 @@ def courier_created_handler(sender, instance, created, **kwargs):
         print(f"🔥 REAL-TIME UPDATE: New courier {instance.user.get_full_name() or instance.user.email} sent to admin dashboard")
 
 @receiver(post_save, sender=User)
-def create_user_profile(sender, instance, created, **kwargs):
+def create_all_user_profiles(sender, instance, created, **kwargs):
     """
-    Automatically create the appropriate profile based on user role when a new user is created.
-    Only creates a profile if one doesn't already exist for the user's current role.
+    Ensure ALL relevant profiles exist for users with multiple roles.
+    Only creates profiles for roles that are EXPLICITLY assigned via UserRole.
+    Does NOT auto-create UserProfile unless user explicitly has 'user' role.
     """
-    # Skip if this is a raw save or we're in a migration
+    # Don't run in raw saves or migrations
     if kwargs.get('raw') or kwargs.get('update_fields') == ['last_login']:
         return
-        
-    # Only create a profile if the user was just created or is changing roles
-    if created or (hasattr(instance, '_role_changed') and instance._role_changed):
-        if instance.role == 'user' and not hasattr(instance, 'profile'):
-            UserProfile.objects.get_or_create(user=instance)
-        # Note: VendorProfile and CourierProfile are created by their respective serializers
-        # to avoid conflicts and ensure all required fields are provided
-            
-        # Clear the flag if it was set
-        if hasattr(instance, '_role_changed'):
-            delattr(instance, '_role_changed')
+
+    # Get explicit roles from UserRole table (not the role field which defaults to 'user')
+    if hasattr(instance, 'get_roles'):
+        roles = instance.get_roles()
+    else:
+        # If get_roles doesn't exist or returns empty, check role field but don't default
+        roles = []
+        if hasattr(instance, 'role') and instance.role:
+            roles = [instance.role]
+
+    # Only create profiles for explicitly assigned roles
+    from .models import UserProfile, VendorProfile, CourierProfile
+    if 'user' in roles and not hasattr(instance, 'profile'):
+        UserProfile.objects.get_or_create(user=instance)
+    if 'vendor' in roles and not hasattr(instance, 'vendor_profile'):
+        VendorProfile.objects.get_or_create(user=instance, defaults={'phone': getattr(instance, 'phone', '')})
+    if 'courier' in roles and not hasattr(instance, 'courier_profile'):
+        CourierProfile.objects.get_or_create(user=instance, defaults={'phone': getattr(instance, 'phone', '')})
 
 @receiver(post_save, sender=User)
 def save_user_profile(sender, instance, **kwargs):
@@ -315,11 +334,3 @@ def save_user_profile(sender, instance, **kwargs):
         logger.info(f"New courier profile created for user {instance.user_id}. Verification status set to 'pending'.")
 
 # Vendor popularity tracking removed
-
-# MenuItem <-> VendorProfile.last_menu_update handler
-@receiver([post_save, post_delete], sender=MenuItem)
-def update_vendor_last_menu(sender, instance, **kwargs):
-    vendor = instance.vendor
-    if vendor:
-        vendor.last_menu_update = timezone.now()
-        vendor.save(update_fields=['last_menu_update'])

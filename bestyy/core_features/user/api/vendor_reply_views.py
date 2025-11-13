@@ -8,7 +8,8 @@ from rest_framework import status
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
-from bestyy.core_features.user.models import Order, VendorProfile
+from bestyy.restaurant_features.order.models import Order
+from bestyy.core_features.user.models import VendorProfile
 from bestyy.core_features.user.services.notification_service import AutomaticVendorReplyService
 
 
@@ -43,18 +44,18 @@ class VendorReplyManagementView(APIView):
                     'success': False,
                     'error': 'Permission denied'
                 }, status=status.HTTP_403_FORBIDDEN)
-            
+
             # Prepare order data
             order_data = {
                 'vendor': order.vendor,
                 'order': order,
                 'order_items': self._get_order_items_data(order),
                 'customer': {
-                    'name': f"{order.user.first_name} {order.user.last_name}".strip(),
-                    'email': order.user.email,
-                    'phone': getattr(order.user, 'phone', 'Not provided')
+                    'name': f"{order.customer.first_name} {order.customer.last_name}".strip(),
+                    'email': order.customer.email,
+                    'phone': getattr(order.customer, 'phone', 'Not provided')
                 },
-                'total_amount': float(order.total_price)
+                'total_amount': float(order.total_amount)
             }
             
             # Send automatic reply
@@ -92,11 +93,12 @@ class VendorReplyManagementView(APIView):
             
             reply_history = []
             for order in orders:
+                customer_name = f"{order.customer.first_name} {order.customer.last_name}".strip() if order.customer else "Unknown Customer"
                 reply_history.append({
                     'order_id': order.id,
-                    'order_number': f"#{order.id}",
-                    'customer_name': f"{order.user.first_name} {order.user.last_name}".strip(),
-                    'total_amount': float(order.total_price),
+                    'order_number': order.order_number,
+                    'customer_name': customer_name,
+                    'total_amount': float(order.total_amount),
                     'status': order.status,
                     'order_date': order.created_at.isoformat(),
                     'reply_sent': True,  # Assuming reply was sent when order was placed

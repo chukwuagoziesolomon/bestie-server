@@ -14,7 +14,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView
 
-from bestyy.core_features.user.models import VendorProfile, CourierProfile, User, SystemSettings, Order
+from bestyy.core_features.user.models import VendorProfile, CourierProfile, User
+from bestyy.restaurant_features.order.models import Order
 from bestyy.core_features.user.serializers.vendor_serializers import VendorProfileSerializer
 from bestyy.core_features.user.serializers.courier_serializers import CourierProfileSerializer
 from bestyy.core_features.user.permissions import IsAdminUser
@@ -1812,7 +1813,7 @@ class ProfitAnalyticsView(APIView):
                 "order_id": 123,
                 "order_number": "ORD-00123",
                 "completed_at": "2023-01-01T12:00:00Z",
-                "total_price": "1000.00",
+                "total_amount": "1000.00",
                 "platform_commission": "100.00",
                 "delivery_fee": "500.00",
                 "vendor_payout": "900.00",
@@ -1890,7 +1891,7 @@ class ProfitAnalyticsView(APIView):
 
         # Calculate totals
         total_revenue = completed_orders.aggregate(
-            total=Sum('total_price')
+            total=Sum('total_amount')
         )['total'] or Decimal('0.00')
 
         total_platform_commission = completed_orders.aggregate(
@@ -1975,7 +1976,7 @@ class ProfitAnalyticsView(APIView):
                 'order_id': order.id,
                 'order_number': order.order_number or f'#{order.id}',
                 'completed_at': order.user_receipt_confirmed_at.isoformat() if order.user_receipt_confirmed_at else None,
-                'total_price': str(order.total_price),
+                'total_amount': str(order.total_amount),
                 'platform_commission': str(order.platform_commission or '0.00'),
                 'delivery_fee': str(order.delivery_fee or '0.00'),
                 'vendor_payout': str(order.vendor_payout_amount or '0.00'),
@@ -1984,7 +1985,7 @@ class ProfitAnalyticsView(APIView):
             })
 
             total_profit += profit
-            total_revenue += order.total_price
+            total_revenue += order.total_amount
 
         # Paginate results
         page_size = min(100, int(request.query_params.get('page_size', 20)))

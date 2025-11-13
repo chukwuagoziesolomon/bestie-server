@@ -8,11 +8,11 @@ import django
 from pathlib import Path
 
 # Add the project directory to Python path
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR))
 
 # Setup Django
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'bestyy.settings')
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'bestyy.config.settings')
 django.setup()
 
 from django.conf import settings

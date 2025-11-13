@@ -4,7 +4,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.utils import timezone
 from django.db.models import Sum, Avg, F, ExpressionWrapper, DurationField
 from datetime import timedelta
-from user.models import Order
+from bestyy.restaurant_features.order.models import Order
 from .models import Activity
 from .serializers import ActivitySerializer
 from user.utils.websocket_notifications import record_activity
@@ -26,10 +26,10 @@ class VendorTransactionHistoryView(APIView):
         transactions = [
             {
                 "order_id": order.id,
-                "amount": float(order.total_price),
+                "amount": float(order.total_amount),
                 "date": order.created_at.strftime('%Y-%m-%d %H:%M'),
                 "status": order.status,
-                "customer": str(order.user) if hasattr(order, 'user') else None
+                "customer": str(order.customer) if hasattr(order, 'customer') else None
             }
             for order in orders
         ]
@@ -54,7 +54,12 @@ class DashboardAnalyticsView(APIView):
                 {"detail": "You do not have a vendor profile. Please register as a vendor to access the dashboard."},
                 status=403
             )
-        vendor = user.vendor_profile
+        vendor = getattr(user, 'vendor_profile', None)
+        if not vendor:
+            return Response(
+                {"detail": "Vendor profile not found."},
+                status=404
+            )
         
         # Date calculations
         today = timezone.now().date()
@@ -73,27 +78,25 @@ class DashboardAnalyticsView(APIView):
         
         # Calculate today's metrics
         todays_order_count = today_orders.count()
-        todays_sales = today_orders.aggregate(total=Sum('total_price'))['total'] or 0
+        todays_sales = today_orders.aggregate(total=Sum('total_amount'))['total'] or 0
         
         # Calculate total sales (all time for this vendor)
-        total_sales = vendor_orders.aggregate(total=Sum('total_price'))['total'] or 0
+        total_sales = vendor_orders.aggregate(total=Sum('total_amount'))['total'] or 0
         
         # Calculate pending orders (payment confirmed but user hasn't confirmed receipt)
         pending_orders = vendor_orders.filter(
-            payment_confirmed=True,
-            user_receipt_confirmed=False,
+            payment_status=True,
             status__in=['delivered', 'ready']
         ).count()
         
         # Calculate delivery time (average delivery time for completed orders)
         completed_orders = vendor_orders.filter(
-            user_receipt_confirmed=True,
-            delivered_at__isnull=False
+            status='delivered'
         )
         # Annotate each order with delivery time in minutes
         completed_orders = completed_orders.annotate(
             delivery_time=ExpressionWrapper(
-                F('delivered_at') - F('order_placed_at'),
+                F('updated_at') - F('created_at'),
                 output_field=DurationField()
             )
         )
@@ -109,7 +112,7 @@ class DashboardAnalyticsView(APIView):
         
         # Calculate DAILY percentage changes (today vs yesterday)
         yesterday_order_count = yesterday_orders.count()
-        yesterday_sales = yesterday_orders.aggregate(total=Sum('total_price'))['total'] or 0
+        yesterday_sales = yesterday_orders.aggregate(total=Sum('total_amount'))['total'] or 0
         
         # Daily order count percentage change
         if yesterday_order_count > 0:
@@ -125,8 +128,7 @@ class DashboardAnalyticsView(APIView):
             
         # Daily pending orders percentage change
         yesterday_pending = vendor_orders.filter(
-            payment_confirmed=True,
-            user_receipt_confirmed=False,
+            payment_status=True,
             status__in=['delivered', 'ready'],
             created_at__date=yesterday
         ).count()
@@ -141,12 +143,12 @@ class DashboardAnalyticsView(APIView):
         this_week_start = today - timedelta(days=6)
         this_week_orders = vendor_orders.filter(created_at__date__gte=this_week_start, created_at__date__lte=today)
         this_week_order_count = this_week_orders.count()
-        this_week_sales = this_week_orders.aggregate(total=Sum('total_price'))['total'] or 0
+        this_week_sales = this_week_orders.aggregate(total=Sum('total_amount'))['total'] or 0
         
         # Last week (7 days before this week)
         last_week_orders = vendor_orders.filter(created_at__date__gte=last_week_start, created_at__date__lte=last_week_end)
         last_week_order_count = last_week_orders.count()
-        last_week_sales = last_week_orders.aggregate(total=Sum('total_price'))['total'] or 0
+        last_week_sales = last_week_orders.aggregate(total=Sum('total_amount'))['total'] or 0
         
         # Weekly order count percentage change
         if last_week_order_count > 0:
@@ -175,7 +177,7 @@ class DashboardAnalyticsView(APIView):
                 created_at__month=current_month,
                 created_at__day=day
             )
-            day_sales = day_orders.aggregate(total=Sum('total_price'))['total'] or 0
+            day_sales = day_orders.aggregate(total=Sum('total_amount'))['total'] or 0
             sales_chart.append({
                 "label": f"{day} {calendar.month_abbr[current_month]}",
                 "sales": float(day_sales),

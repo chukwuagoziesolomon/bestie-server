@@ -203,21 +203,19 @@ class UserProfileSerializer(serializers.ModelSerializer):
     Serializer for user profiles.
     Handles both user and profile updates in a single request.
     """
-    user = UserSerializer(required=True)
-    
     class Meta:
         model = UserProfile
         fields = [
-            'id', 'user', 'phone', 'address', 'nick_name', 
-            'language', 'profile_picture', 'email_notifications', 
-            'push_notifications', 'created_at', 'updated_at'
+            'id', 'phone', 'address', 'nick_name',
+            'language', 'profile_picture', 'email_notifications',
+            'push_notifications'
         ]
-        read_only_fields = ('id', 'created_at', 'updated_at')
+        read_only_fields = ('id',)
 
     def update(self, instance, validated_data):
         # Handle user data if provided
         user_data = validated_data.pop('user', {})
-        user = instance.user
+        user = instance
         
         # Update user fields
         for attr, value in user_data.items():
@@ -271,7 +269,7 @@ class UserLoginSerializer(serializers.Serializer):
                 'first_name': user.first_name,
                 'last_name': user.last_name,
                 'role': user.role,  # Primary role for backward compatibility
-                'roles': user.get_roles(),  # All roles
+                'roles': [],  # Since UserRole model was deleted, return empty list for now
                 'phone': user.profile.phone if hasattr(user, 'profile') else None,  # Include phone number from profile
             }
         }
@@ -388,8 +386,8 @@ class MultiRoleRegistrationSerializer(serializers.Serializer):
     with the same email/phone/password but preventing duplicate roles.
     """
     email = serializers.EmailField(required=True)
-    first_name = serializers.CharField(required=True)
-    last_name = serializers.CharField(required=True)
+    first_name = serializers.CharField(required=False, allow_blank=True)
+    last_name = serializers.CharField(required=False, allow_blank=True)
     phone = serializers.CharField(required=True, max_length=16)
     password = serializers.CharField(
         write_only=True,
@@ -403,7 +401,7 @@ class MultiRoleRegistrationSerializer(serializers.Serializer):
         style={'input_type': 'password'}
     )
     roles = serializers.ListField(
-        child=serializers.ChoiceField(choices=User.ROLE_CHOICES),
+        child=serializers.ChoiceField(choices=[('user', 'User'), ('vendor', 'Vendor'), ('courier', 'Courier')]),
         required=True,
         min_length=1,
         help_text="List of roles to register for: ['user', 'vendor', 'courier']"
@@ -415,6 +413,12 @@ class MultiRoleRegistrationSerializer(serializers.Serializer):
     business_address = serializers.CharField(required=False, allow_blank=True)
     delivery_radius = serializers.IntegerField(required=False, allow_null=True)
     service_areas = serializers.CharField(required=False, allow_blank=True)
+    logo = serializers.ImageField(required=False, allow_null=True, allow_empty_file=True)
+    cover_photo = serializers.ImageField(required=False, allow_null=True, allow_empty_file=True)
+    cac_number = serializers.CharField(required=False, allow_blank=True)
+    tin_number = serializers.CharField(required=False, allow_blank=True)
+    opening_hours = serializers.TimeField(required=False, allow_null=True)
+    closing_hours = serializers.TimeField(required=False, allow_null=True)
     
     # Courier-specific fields (optional)
     vehicle_type = serializers.CharField(required=False, allow_blank=True)
@@ -450,6 +454,11 @@ class MultiRoleRegistrationSerializer(serializers.Serializer):
                     f"vendor_{field}": f"{field.replace('_', ' ').title()} is required for vendor registration."
                     for field in missing_fields
                 })
+            # Validate required fields for vendor: opening_hours and closing_hours are mandatory
+            if not data.get('opening_hours'):
+                raise serializers.ValidationError({"opening_hours": "Opening hours is required for vendor registration."})
+            if not data.get('closing_hours'):
+                raise serializers.ValidationError({"closing_hours": "Closing hours is required for vendor registration."})
         
         # Validate courier-specific fields if courier role is selected
         if 'courier' in data['roles']:
@@ -464,83 +473,140 @@ class MultiRoleRegistrationSerializer(serializers.Serializer):
         return data
 
     def create(self, validated_data):
-        from .vendor_serializers import VendorProfile
-        from .courier_serializers import CourierProfile
-        
+        from ..models import PendingUser
+        from django.utils import timezone
+        from datetime import timedelta
+        import secrets
+
         # Extract data
         email = validated_data['email']
         password = validated_data['password']
         roles = validated_data['roles']
         phone = validated_data['phone']
-        first_name = validated_data['first_name']
-        last_name = validated_data['last_name']
-        
-        # Check if user already exists
-        try:
-            user = User.objects.get(email=email)
-            existing_roles = user.get_roles()
-            
-            # Check for role conflicts
-            conflicting_roles = [role for role in roles if role in existing_roles]
-            if conflicting_roles:
-                raise serializers.ValidationError({
-                    'roles': f"User already has the following roles: {', '.join(conflicting_roles)}. "
-                            f"Available roles to add: {', '.join([r for r in roles if r not in existing_roles])}"
-                })
-            
-            # Add new roles to existing user
-            for role in roles:
-                user.add_role(role)
-                self._create_role_profile(user, role, validated_data)
-            
-        except User.DoesNotExist:
-            # Create new user
-            user = User.objects.create_user(
-                email=email,
-                password=password,
-                first_name=first_name,
-                last_name=last_name,
-                role=roles[0]  # Set primary role (first in list)
-            )
-            
-            # Add all roles
-            for role in roles:
-                user.add_role(role)
-                self._create_role_profile(user, role, validated_data)
-        
-        return user
+        first_name = validated_data.get('first_name') or (email.split('@')[0].split('.')[0].title() if email else 'WhatsApp')
+        last_name = validated_data.get('last_name') or 'User'
 
-    def _create_role_profile(self, user, role, validated_data):
+        # Check if user already exists
+        if User.objects.filter(email=email).exists():
+            raise serializers.ValidationError({
+                'email': 'A user with this email already exists.'
+            })
+
+        # Check if pending user already exists
+        if PendingUser.objects.filter(email=email, is_verified=False).exists():
+            raise serializers.ValidationError({
+                'email': 'A registration is already pending for this email. Please check your WhatsApp for verification code.'
+            })
+
+        # Generate verification code
+        verification_code = str(secrets.randbelow(900000) + 100000)
+
+        # Prepare profile data, handling file uploads separately
+        profile_data = {
+            'roles': roles,
+            'business_name': validated_data.get('business_name', ''),
+            'business_category': validated_data.get('business_category', ''),
+            'business_address': validated_data.get('business_address', ''),
+            'vehicle_type': validated_data.get('vehicle_type', ''),
+            'service_areas': validated_data.get('service_areas', ''),
+            'cac_number': validated_data.get('cac_number'),
+            'tin_number': validated_data.get('tin_number'),
+            'license_number': validated_data.get('license_number'),
+            'vehicle_registration': validated_data.get('vehicle_registration'),
+            'availability_status': validated_data.get('availability_status', 'available'),
+            'delivery_radius': validated_data.get('delivery_radius', 5),
+        }
+
+        # Handle time fields separately to avoid JSON serialization issues
+        if validated_data.get('opening_hours'):
+            profile_data['opening_hours'] = validated_data['opening_hours'].strftime('%H:%M:%S') if hasattr(validated_data['opening_hours'], 'strftime') else str(validated_data['opening_hours'])
+        if validated_data.get('closing_hours'):
+            profile_data['closing_hours'] = validated_data['closing_hours'].strftime('%H:%M:%S') if hasattr(validated_data['closing_hours'], 'strftime') else str(validated_data['closing_hours'])
+
+        # Handle file uploads - store file data separately to avoid JSON serialization issues
+        uploaded_files = {}
+        if 'logo' in validated_data and validated_data['logo']:
+            uploaded_files['logo'] = validated_data['logo']
+        if 'cover_photo' in validated_data and validated_data['cover_photo']:
+            uploaded_files['cover_photo'] = validated_data['cover_photo']
+
+        # Create pending user instead of actual user
+        pending_user = PendingUser.objects.create(
+            email=email,
+            password=password,
+            first_name=first_name,
+            last_name=last_name,
+            phone=phone,
+            user_type=roles[0],  # Primary role
+            verification_code=verification_code,
+            profile_data=profile_data,
+            expires_at=timezone.now() + timedelta(hours=24)
+        )
+
+        # Handle file uploads - store file info for later processing during verification
+        # This avoids upload failures during registration and ensures scalability
+        if validated_data.get('logo'):
+            logo_file = validated_data['logo']
+            if logo_file:
+                profile_data['logo_filename'] = logo_file.name
+                profile_data['logo_size'] = logo_file.size
+                profile_data['logo_content_type'] = getattr(logo_file, 'content_type', 'image/jpeg')
+
+        if validated_data.get('cover_photo'):
+            cover_file = validated_data['cover_photo']
+            if cover_file:
+                profile_data['cover_photo_filename'] = cover_file.name
+                profile_data['cover_photo_size'] = cover_file.size
+                profile_data['cover_photo_content_type'] = getattr(cover_file, 'content_type', 'image/jpeg')
+
+        # Update pending user with profile data
+        pending_user.profile_data = profile_data
+        pending_user.save()
+
+        # Note: Files will be uploaded to Cloudinary during WhatsApp verification
+        # when the actual user account is created. This prevents registration failures
+        # and ensures all users can register even if file upload temporarily fails.
+
+        return pending_user
+
+    def _create_role_profile(self, user, role, validated_data, phone=None):
         """Create the appropriate profile for the role"""
         from .vendor_serializers import VendorProfile
         from .courier_serializers import CourierProfile
-        
+
+        # Use provided phone or get from validated_data
+        phone = phone or validated_data.get('phone')
+
         if role == 'user':
             # Create UserProfile if it doesn't exist
             if not hasattr(user, 'profile'):
-                UserProfile.objects.create(user=user, phone=validated_data['phone'])
-        
+                UserProfile.objects.create(user=user, phone=phone)
+
         elif role == 'vendor':
             # Create VendorProfile if it doesn't exist
             if not hasattr(user, 'vendor_profile'):
                 VendorProfile.objects.create(
                     user=user,
-                    phone=validated_data['phone'],
-                    business_name=validated_data['business_name'],
-                    business_category=validated_data['business_category'],
-                    business_address=validated_data['business_address'],
+                    phone=phone,
+                    business_name=validated_data.get('business_name'),
+                    business_category=validated_data.get('business_category'),
+                    business_address=validated_data.get('business_address'),
                     delivery_radius=validated_data.get('delivery_radius', 5),
-                    service_areas=validated_data.get('service_areas', '')
+                    service_areas=validated_data.get('service_areas', ''),
+                    logo=validated_data.get('logo'),
+                    cac_number=validated_data.get('cac_number'),
+                    opening_hours=validated_data.get('opening_hours'),
+                    closing_hours=validated_data.get('closing_hours')
                 )
-        
+
         elif role == 'courier':
             # Create CourierProfile if it doesn't exist
             if not hasattr(user, 'courier_profile'):
                 CourierProfile.objects.create(
                     user=user,
-                    phone=validated_data['phone'],
-                    vehicle_type=validated_data['vehicle_type'],
-                    license_number=validated_data['license_number'],
-                    vehicle_registration=validated_data['vehicle_registration'],
+                    phone=phone,
+                    vehicle_type=validated_data.get('vehicle_type'),
+                    license_number=validated_data.get('license_number'),
+                    vehicle_registration=validated_data.get('vehicle_registration'),
                     availability_status=validated_data.get('availability_status', 'available')
                 )

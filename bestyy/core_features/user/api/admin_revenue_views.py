@@ -12,8 +12,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from bestyy.core_features.user.permissions import IsAdminUser
-from bestyy.core_features.user.models import Order
-from bestyy.restaurant_features.order.models import Order as OrderModel
+from bestyy.restaurant_features.order.models import Order
 
 logger = logging.getLogger(__name__)
 
@@ -161,11 +160,11 @@ class AdminRevenueAnalyticsView(APIView):
     
     def _get_revenue_data(self, date_range, granularity):
         """Get time series revenue data."""
-        # Use the main Order model from user app
+        # Use the main Order model from restaurant_features app
         orders = Order.objects.filter(
             created_at__gte=date_range['start'],
             created_at__lte=date_range['end'],
-            payment_confirmed=True  # Only confirmed payments
+            payment_status=True  # Only confirmed payments
         )
         
         # Group by time period
@@ -190,9 +189,9 @@ class AdminRevenueAnalyticsView(APIView):
             daily_data = orders.extra(
                 select={'date': "DATE(created_at)"}
             ).values('date').annotate(
-                revenue=Sum('total_price'),
+                revenue=Sum('total_amount'),
                 orders=Count('id'),
-                avg_order_value=Avg('total_price')
+                avg_order_value=Avg('total_amount')
             ).order_by('date')
             
             for item in daily_data:
@@ -208,9 +207,9 @@ class AdminRevenueAnalyticsView(APIView):
             hourly_data = orders.extra(
                 select={'hour': "DATE_FORMAT(created_at, '%Y-%m-%d %H:00:00')"}
             ).values('hour').annotate(
-                revenue=Sum('total_price'),
+                revenue=Sum('total_amount'),
                 orders=Count('id'),
-                avg_order_value=Avg('total_price')
+                avg_order_value=Avg('total_amount')
             ).order_by('hour')
             
             for item in hourly_data:
@@ -237,8 +236,8 @@ class AdminRevenueAnalyticsView(APIView):
                     created_at__gte=current_date,
                     created_at__lt=period_end
                 )
-                
-                revenue = period_orders.aggregate(total=Sum('total_price'))['total'] or 0
+
+                revenue = period_orders.aggregate(total=Sum('total_amount'))['total'] or 0
                 order_count = period_orders.count()
                 avg_value = float(revenue / order_count) if order_count > 0 else 0
                 
@@ -259,10 +258,10 @@ class AdminRevenueAnalyticsView(APIView):
         current_orders = Order.objects.filter(
             created_at__gte=date_range['start'],
             created_at__lte=date_range['end'],
-            payment_confirmed=True
+            payment_status=True
         )
         
-        total_revenue = current_orders.aggregate(total=Sum('total_price'))['total'] or 0
+        total_revenue = current_orders.aggregate(total=Sum('total_amount'))['total'] or 0
         total_orders = current_orders.count()
         avg_order_value = float(total_revenue / total_orders) if total_orders > 0 else 0
         
@@ -274,10 +273,10 @@ class AdminRevenueAnalyticsView(APIView):
         previous_orders = Order.objects.filter(
             created_at__gte=prev_start,
             created_at__lt=prev_end,
-            payment_confirmed=True
+            payment_status=True
         )
         
-        previous_revenue = previous_orders.aggregate(total=Sum('total_price'))['total'] or 0
+        previous_revenue = previous_orders.aggregate(total=Sum('total_amount'))['total'] or 0
         
         # Calculate growth percentage
         if previous_revenue > 0:
@@ -302,11 +301,12 @@ class AdminRevenueAnalyticsView(APIView):
         )
 
         # Calculate total revenue for payment breakdown
-        total_revenue = orders.aggregate(total=Sum('total_price'))['total'] or Decimal('0.00')
+        total_revenue = orders.aggregate(total=Sum('total_amount'))['total'] or Decimal('0.00')
 
         # Breakdown by status
+        from bestyy.restaurant_features.order.models import OrderStatus
         status_breakdown = {}
-        for status_choice in Order._meta.get_field('status').choices:
+        for status_choice in OrderStatus.choices:
             status_value = status_choice[0]
             status_orders = orders.filter(status=status_value)
             status_revenue = status_orders.aggregate(total=Sum('total_price'))['total'] or 0

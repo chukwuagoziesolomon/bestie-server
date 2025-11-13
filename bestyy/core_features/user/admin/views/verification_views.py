@@ -8,7 +8,8 @@ from django.db.models import Q
 from django.contrib.auth import get_user_model
 
 from bestyy.core_features.user.models import VendorProfile, CourierProfile
-from bestyy.core_features.user.serializers import VendorProfileSerializer, CourierProfileSerializer
+from bestyy.core_features.user.serializers.vendor_serializers import VendorProfileSerializer
+from bestyy.core_features.user.serializers.courier_serializers import CourierProfileSerializer
 
 User = get_user_model()
 

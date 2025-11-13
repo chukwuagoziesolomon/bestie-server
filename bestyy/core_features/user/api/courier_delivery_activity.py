@@ -8,7 +8,7 @@ from datetime import timedelta, date
 from decimal import Decimal
 import logging
 
-from bestyy.core_features.user.models import Order
+from bestyy.restaurant_features.order.models import Order
 
 # Set up logging
 logger = logging.getLogger(__name__)

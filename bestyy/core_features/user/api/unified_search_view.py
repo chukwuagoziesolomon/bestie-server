@@ -13,8 +13,9 @@ import logging
 
 from bestyy.core_features.user.models import (
     User, VendorProfile, CourierProfile,
-    Order, Favorite
+    Favorite
 )
+from bestyy.restaurant_features.order.models import Order
 
 logger = logging.getLogger(__name__)
 
@@ -162,9 +163,8 @@ class UnifiedSearchView(APIView):
         """Search vendors with filters"""
         # Start with base queryset
         queryset = VendorProfile.objects.filter(
-            verification_status='approved',
             is_suspended=False
-        ).select_related('user', 'subscription_plan').annotate(
+        ).select_related('user').annotate(
             avg_rating=Avg('id'),  # Placeholder
             total_reviews=Count('id'),  # Placeholder
             menu_item_count=Count('menu_items')
@@ -361,7 +361,7 @@ class UnifiedSearchView(APIView):
 
         # Featured vendor boost
         score += Case(
-            When(subscription_plan__plan_type='pro', then=50),
+            When(is_featured=True, then=50),
             default=0,
             output_field=DecimalField()
         )
@@ -442,6 +442,7 @@ class UnifiedSearchView(APIView):
         # Get price range from menu items
         menu_items = vendor.menuitem_set.all()
         price_range = None
+        food_images = []
         if menu_items.exists():
             prices = [item.price for item in menu_items if item.price]
             if prices:
@@ -453,6 +454,25 @@ class UnifiedSearchView(APIView):
                     'currency': 'NGN'
                 }
 
+            # Get food images from menu items
+            for item in menu_items[:5]:  # Get first 5 menu items
+                if item.image:
+                    try:
+                        if hasattr(item.image, 'url'):
+                            image_url = item.image.url
+                            if 'cloudinary.com' in image_url:
+                                # Transform for web optimization
+                                image_url = image_url.replace('/upload/', '/upload/w_300,h_300,c_fill,f_auto,q_auto/')
+                            food_images.append({
+                                'id': item.id,
+                                'dish_name': item.dish_name,
+                                'image': image_url,
+                                'thumbnail': self._get_cloudinary_thumbnail(image_url) if image_url else None,
+                                'price': float(item.price)
+                            })
+                    except Exception:
+                        continue
+
         return {
             'type': 'vendor',
             'id': vendor.id,
@@ -461,9 +481,11 @@ class UnifiedSearchView(APIView):
             'business_description': vendor.business_description,
             'business_address': vendor.business_address,
             'logo': logo_url,
+            'logo_thumbnail': self._get_cloudinary_thumbnail(logo_url) if logo_url else None,
+            'food_images': food_images,  # Add food images from menu items
             'rating': float(vendor.avg_rating or 0),
             'total_reviews': vendor.total_reviews or 0,
-            'is_featured': vendor.subscription_plan.plan_type == 'pro' if vendor.subscription_plan else False,
+            'is_featured': vendor.is_featured,
             'offers_delivery': vendor.offers_delivery,
             'delivery_time': self._estimate_delivery_time(vendor),
             'service_areas': vendor.service_areas.split(',') if vendor.service_areas else [],
