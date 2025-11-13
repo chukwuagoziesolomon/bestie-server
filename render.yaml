@@ -5,13 +5,7 @@ services:
     plan: free
     runtime: python-3.11.9
     buildCommand: ./bestyy/build.sh
-    startCommand: |
-      echo "=== Starting Application ==="
-      echo "Current directory: $(pwd)"
-      echo "DJANGO_SETTINGS_MODULE: $DJANGO_SETTINGS_MODULE"
-      echo "DEBUG: $DEBUG"
-      echo "PORT: $PORT"
-      daphne -b 0.0.0.0 -p $PORT bestyy.asgi:application
+    startCommand: daphne -b 0.0.0.0 -p $PORT bestyy.config.asgi:application
     envVars:
       - key: DJANGO_SETTINGS_MODULE
         value: bestyy.settings

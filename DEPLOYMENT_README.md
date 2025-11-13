@@ -75,7 +75,7 @@ git push origin main
   ```
 - **Start Command**:
   ```bash
-  daphne -b 0.0.0.0 -p $PORT bestyy.asgi:application
+  daphne -b 0.0.0.0 -p $PORT bestyy.config.asgi:application
   ```
 
 **Note**: The `manage.py` file is in the root directory and points to `bestyy.config.settings`, so no directory changes are needed in the commands.
@@ -114,7 +114,7 @@ Click "Create Web Service" and wait for deployment to complete.
 
 ### Start Command (in render.yaml):
 ```bash
-daphne -b 0.0.0.0 -p $PORT bestyy.asgi:application
+daphne -b 0.0.0.0 -p $PORT bestyy.config.asgi:application
 ```
 
 ## 🐛 Troubleshooting
