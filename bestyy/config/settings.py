@@ -23,14 +23,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-th5kfgtyu#mxlxtezbd)v9asvrrcc2n791313@ox4$d09mrsfm')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG_STR = config('DEBUG', default='True').lower()
+DEBUG_STR = config('DEBUG', default='False').lower()
 DEBUG = DEBUG_STR in ('true', '1', 'yes', 'on')
 
-# Force development mode - comment out for production
-DEBUG = True
-print("=== DEVELOPMENT MODE ENABLED ===")
-print(f"DEBUG setting: {DEBUG}")
-print(f"========================")
+# Production mode will be enabled when DEBUG=False in environment
+if DEBUG:
+    print("=== DEVELOPMENT MODE ENABLED ===")
+    print(f"DEBUG setting: {DEBUG}")
+    print(f"========================")
 
 # Allow ngrok domains
 ALLOWED_HOSTS = ['localhost', '127.0.0.1', '.ngrok-free.app', 'f570d64ef94e.ngrok-free.app', 'bestyy-server.onrender.com', '.onrender.com', 'bestyy-web.vercel.app']
@@ -68,7 +68,7 @@ PAYSTACK_SECRET_KEY = config('PAYSTACK_SECRET_KEY', default='')
 PAYSTACK_PUBLIC_KEY = config('PAYSTACK_PUBLIC_KEY', default='')
 PAYSTACK_BASE_URL = 'https://api.paystack.co'
 
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='bestie-server.onrender.com,localhost,127.0.0.1,*.onrender.com').split(',')
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='bestie-server.onrender.com,bestyy-web.vercel.app,localhost,127.0.0.1,*.onrender.com,*.vercel.app').split(',')
 # Ensure ngrok hosts are allowed during development
 ALLOWED_HOSTS = list(set(ALLOWED_HOSTS + ['.ngrok-free.app', 'f570d64ef94e.ngrok-free.app']))
 print(f"ALLOWED_HOSTS set to: {ALLOWED_HOSTS}")
@@ -390,8 +390,8 @@ if not DEBUG:
         'https://bestyy-web.vercel.app',
         'https://bestie-admin.vercel.app',
         'https://bestie-server.onrender.com',
-        'http://localhost:3000',
-        'http://127.0.0.1:3000',
+        'https://*.vercel.app',
+        'https://*.onrender.com',
     ]
     
     # Also allow the environment variable if set

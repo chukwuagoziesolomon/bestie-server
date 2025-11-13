@@ -48,6 +48,7 @@ cp .env.example .env
 | `CLOUDINARY_API_SECRET` | Cloudinary API secret | `your-secret` |
 | `WHATSAPP_ACCESS_TOKEN` | WhatsApp Business API token | `your-token` |
 | `PAYSTACK_SECRET_KEY` | Paystack secret key | `sk_test_...` |
+| `CORS_ALLOWED_ORIGINS` | Frontend domains (comma-separated) | `https://bestyy-web.vercel.app,https://your-frontend-domain.com` |
 
 ## 🚀 Deployment Steps
 
