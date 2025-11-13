@@ -4,21 +4,13 @@ services:
     env: python
     plan: free
     runtime: python-3.11.9
-    buildCommand: |
-      python --version
-      pip install --upgrade pip
-      pip install setuptools==68.2.2 wheel==0.41.2
-      pip install -r requirements.txt --no-cache-dir
-      cd bestyy && python manage.py collectstatic --noinput
-      cd bestyy && python manage.py migrate sites
-      cd bestyy && python manage.py migrate product
-      cd bestyy && python manage.py migrate
+    buildCommand: ./bestyy/build.sh
     startCommand: |
-      echo "Starting with daphne..."
-      cd bestyy
+      echo "=== Starting Application ==="
       echo "Current directory: $(pwd)"
       echo "DJANGO_SETTINGS_MODULE: $DJANGO_SETTINGS_MODULE"
       echo "DEBUG: $DEBUG"
+      echo "PORT: $PORT"
       daphne -b 0.0.0.0 -p $PORT bestyy.asgi:application
     envVars:
       - key: DJANGO_SETTINGS_MODULE

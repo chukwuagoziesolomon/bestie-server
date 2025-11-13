@@ -5,8 +5,8 @@ from rest_framework import status, permissions, serializers
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.generics import (
-    CreateAPIView, 
-    RetrieveUpdateAPIView, 
+    CreateAPIView,
+    RetrieveUpdateAPIView,
     ListAPIView,
     UpdateAPIView,
     DestroyAPIView,
@@ -17,6 +17,7 @@ from rest_framework.generics import (
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework.pagination import PageNumberPagination
 
 from bestyy.core_features.user.serializers.user_serializers import (
@@ -154,6 +155,52 @@ class UserProfileInfoView(RetrieveUpdateAPIView):
 
         # Return updated profile data
         return self.get(request)
+
+
+class HealthCheckView(APIView):
+    """
+    Health check endpoint for monitoring service status.
+    """
+    permission_classes = []  # Allow public access for monitoring
+
+    def get(self, request):
+        """Return service health status"""
+        from django.db import connection
+        from django.core.cache import cache
+
+        health_status = {
+            'status': 'healthy',
+            'timestamp': timezone.now().isoformat(),
+            'service': 'bestyy-backend',
+            'version': '1.0.0'
+        }
+
+        # Check database connectivity
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+            health_status['database'] = 'connected'
+        except Exception as e:
+            health_status['database'] = f'error: {str(e)}'
+            health_status['status'] = 'unhealthy'
+
+        # Check cache connectivity (optional)
+        try:
+            cache.set('health_check', 'ok', 10)
+            cache_value = cache.get('health_check')
+            if cache_value == 'ok':
+                health_status['cache'] = 'connected'
+            else:
+                health_status['cache'] = 'error: cache not working'
+                health_status['status'] = 'degraded'
+        except Exception as e:
+            health_status['cache'] = f'error: {str(e)}'
+            # Don't mark as unhealthy for cache issues
+
+        # Set HTTP status code
+        status_code = 200 if health_status['status'] == 'healthy' else 503
+
+        return Response(health_status, status=status_code)
 
 
 class ChangePasswordView(UpdateAPIView):

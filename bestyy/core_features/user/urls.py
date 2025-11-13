@@ -27,6 +27,9 @@ urlpatterns = [
     path('me/', user_views.UserProfileView.as_view(), name='user_me'),
     path('profile/', user_views.UserProfileView.as_view(), name='user_profile'),
     path('profile/info/', user_views.UserProfileInfoView.as_view(), name='user_profile_info'),
+
+    # Health check for monitoring
+    path('health/', user_views.HealthCheckView.as_view(), name='health_check'),
     path('register/multi-role/', user_views.MultiRoleRegistrationView.as_view(), name='multi_role_register'),
     path('addresses/', user_views.UserAddressListView.as_view(), name='user_addresses'),
     path('addresses/<int:pk>/', user_views.UserAddressDetailView.as_view(), name='user_address_detail'),
