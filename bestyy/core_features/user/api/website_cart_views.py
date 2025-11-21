@@ -26,10 +26,10 @@ from .cors_decorator import cors_allow_x_cart_token
 logger = logging.getLogger(__name__)
 
 
+@cors_allow_x_cart_token
 @api_view(['POST', 'OPTIONS'])
 @permission_classes([AllowAny])
 @authentication_classes([])
-@cors_allow_x_cart_token
 def cart_add_view(request):
     """
     Add product to cart - Works across ALL browsers
