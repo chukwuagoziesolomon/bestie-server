@@ -30,18 +30,17 @@ class CustomCorsMiddleware:
         
         print(f"🟢 CustomCorsMiddleware called! Method: {request.method}, Origin: {origin}")
         
-        # Handle preflight OPTIONS requests
-        if request.method == 'OPTIONS':
+        # Handle preflight OPTIONS requests - RETURN IMMEDIATELY, don't call get_response
+        if request.method == 'OPTIONS' and origin in self.ALLOWED_ORIGINS:
+            print(f"🟢 Handling OPTIONS preflight for {origin}")
             response = HttpResponse()
             response.status_code = 200
-            
-            if origin in self.ALLOWED_ORIGINS:
-                response['Access-Control-Allow-Origin'] = origin
-                response['Access-Control-Allow-Credentials'] = 'true'
-                response['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, PATCH'
-                response['Access-Control-Allow-Headers'] = 'accept, accept-encoding, authorization, content-type, dnt, origin, user-agent, x-csrftoken, x-requested-with, x-cart-token'
-                response['Access-Control-Max-Age'] = '86400'
-            
+            response['Access-Control-Allow-Origin'] = origin
+            response['Access-Control-Allow-Credentials'] = 'true'
+            response['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, PATCH'
+            response['Access-Control-Allow-Headers'] = 'accept, accept-encoding, authorization, content-type, dnt, origin, user-agent, x-csrftoken, x-requested-with, x-cart-token'
+            response['Access-Control-Max-Age'] = '86400'
+            print(f"🟢 Returning CORS headers with x-cart-token")
             return response
         
         # For actual requests, add CORS headers
