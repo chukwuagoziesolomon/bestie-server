@@ -13,22 +13,14 @@ class CustomCorsMiddleware:
         self.get_response = get_response
     
     def __call__(self, request):
-        # Handle preflight OPTIONS requests
-        if request.method == 'OPTIONS':
-            response = self.get_response(request)
-            
-            # Get existing allowed headers from django-cors-headers
-            existing_headers = response.get('Access-Control-Allow-Headers', '')
+        response = self.get_response(request)
+        
+        # For all requests, ensure x-cart-token is in the allowed headers
+        if 'Access-Control-Allow-Headers' in response:
+            existing_headers = response['Access-Control-Allow-Headers']
             
             # Add x-cart-token if not already present
             if 'x-cart-token' not in existing_headers.lower():
-                if existing_headers:
-                    response['Access-Control-Allow-Headers'] = f"{existing_headers}, x-cart-token"
-                else:
-                    response['Access-Control-Allow-Headers'] = "accept, accept-encoding, authorization, content-type, dnt, origin, user-agent, x-csrftoken, x-requested-with, x-cart-token"
-            
-            return response
+                response['Access-Control-Allow-Headers'] = f"{existing_headers}, x-cart-token"
         
-        # For non-OPTIONS requests, just pass through
-        response = self.get_response(request)
         return response
