@@ -6,6 +6,7 @@ services:
     runtime: python-3.11.9
     buildCommand: ./bestyy/build.sh
     startCommand: python -B -m daphne -b 0.0.0.0 -p $PORT bestyy.config.asgi:application
+    autoDeploy: true
     envVars:
       - key: DJANGO_SETTINGS_MODULE
         value: bestyy.config.settings
@@ -27,6 +28,8 @@ services:
         sync: false
       - key: CORS_ALLOWED_ORIGINS
         value: https://bestyy-web.vercel.app,https://bestie-admin.vercel.app,https://bestie-server.onrender.com
+      - key: DEPLOYMENT_TIMESTAMP
+        value: "2025-11-21-force-rebuild"
       - key: DJANGO_SUPERUSER_EMAIL
         value: admin@bestyy.com
       - key: DJANGO_SUPERUSER_PASSWORD
