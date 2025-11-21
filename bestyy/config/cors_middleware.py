@@ -28,6 +28,8 @@ class CustomCorsMiddleware:
     def __call__(self, request):
         origin = request.META.get('HTTP_ORIGIN', '')
         
+        print(f"🟢 CustomCorsMiddleware called! Method: {request.method}, Origin: {origin}")
+        
         # Handle preflight OPTIONS requests
         if request.method == 'OPTIONS':
             response = HttpResponse()
