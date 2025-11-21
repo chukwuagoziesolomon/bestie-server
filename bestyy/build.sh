@@ -36,4 +36,9 @@ python manage.py createcachetable
 echo "Creating superuser..."
 python create_superuser.py
 
-echo "Build completed successfully!"
+# Clear Python cache to force fresh code load
+echo "Clearing Python cache..."
+find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+find . -type f -name "*.pyc" -delete 2>/dev/null || true
+
+echo "Build completed successfully at $(date)"

@@ -5,7 +5,7 @@ services:
     plan: free
     runtime: python-3.11.9
     buildCommand: ./bestyy/build.sh
-    startCommand: daphne -b 0.0.0.0 -p $PORT bestyy.config.asgi:application
+    startCommand: python -B -m daphne -b 0.0.0.0 -p $PORT bestyy.config.asgi:application
     envVars:
       - key: DJANGO_SETTINGS_MODULE
         value: bestyy.config.settings
