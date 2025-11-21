@@ -41,18 +41,8 @@ print(f"ALLOWED_HOSTS set to: {ALLOWED_HOSTS}")
 # ===================================
 # Django CORS headers - Configuration MUST come before middleware initialization
 
-CORS_ALLOW_HEADERS = [
-    'accept',
-    'accept-encoding',
-    'authorization',
-    'content-type',
-    'dnt',
-    'origin',
-    'user-agent',
-    'x-csrftoken',
-    'x-requested-with',
-    'x-cart-token',  # Custom header for JWT-based cart authentication
-]
+# Allow all headers (this is the only way to ensure custom headers work with django-cors-headers)
+CORS_ALLOW_ALL_HEADERS = True
 
 CORS_ALLOW_METHODS = [
     'DELETE',
