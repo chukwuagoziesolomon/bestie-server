@@ -7,6 +7,10 @@ set -o pipefail
 
 echo "Starting build process..."
 
+# Change to project root directory (build.sh is in bestyy/ subdirectory)
+cd "$(dirname "$0")/.."
+echo "Working directory: $(pwd)"
+
 # Check Python version
 echo "Python version:"
 python --version
