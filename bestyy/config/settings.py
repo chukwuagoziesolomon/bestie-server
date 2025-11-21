@@ -276,27 +276,20 @@ else:
     ]
     print(f"Using default CORS_ALLOWED_ORIGINS: {CORS_ALLOWED_ORIGINS}")
 
-# CORS allowed headers - Prioritize environment variable
-env_cors_headers = config('CORS_ALLOW_HEADERS', default='')
-if env_cors_headers:
-    # If environment variable is set, use it (comma-separated list)
-    CORS_ALLOW_HEADERS = [header.strip() for header in env_cors_headers.split(',') if header.strip()]
-    print(f"Using CORS_ALLOW_HEADERS from environment: {CORS_ALLOW_HEADERS}")
-else:
-    # Fallback to default (for local development)
-    CORS_ALLOW_HEADERS = [
-        'accept',
-        'accept-encoding',
-        'authorization',
-        'content-type',
-        'dnt',
-        'origin',
-        'user-agent',
-        'x-csrftoken',
-        'x-requested-with',
-        'x-cart-token',  # For JWT-based cart system
-    ]
-    print(f"Using default CORS_ALLOW_HEADERS: {CORS_ALLOW_HEADERS}")
+# CORS allowed headers - Manually specified to ensure x-cart-token is included
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+    'x-cart-token',  # Custom header for JWT-based cart system
+]
+print(f"CORS_ALLOW_HEADERS manually configured: {CORS_ALLOW_HEADERS}")
 
 # CORS expose headers (so frontend can read them from responses)
 CORS_EXPOSE_HEADERS = [

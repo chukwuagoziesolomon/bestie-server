@@ -26,19 +26,19 @@ pip install -r requirements.txt --no-cache-dir
 
 # Collect static files
 echo "Collecting static files..."
-python manage.py collectstatic --noinput
+python -B manage.py collectstatic --noinput
 
 # Run database migrations
 echo "Running database migrations..."
-python manage.py migrate
+python -B manage.py migrate
 
 # Create cache table
 echo "Creating cache table..."
-python manage.py createcachetable
+python -B manage.py createcachetable
 
 # Create superuser automatically
 echo "Creating superuser..."
-python create_superuser.py
+python -B create_superuser.py
 
 # Clear Python cache to force fresh code load
 echo "Clearing Python cache..."

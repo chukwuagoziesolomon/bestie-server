@@ -5,7 +5,7 @@ services:
     plan: free
     runtime: python-3.11.9
     buildCommand: ./bestyy/build.sh
-    startCommand: python -B -m daphne -b 0.0.0.0 -p $PORT bestyy.config.asgi:application
+    startCommand: gunicorn bestyy.config.asgi:application -k uvicorn.workers.UvicornWorker -b 0.0.0.0:$PORT --workers 4
     autoDeploy: true
     envVars:
       - key: DJANGO_SETTINGS_MODULE
@@ -31,7 +31,7 @@ services:
       - key: CORS_ALLOW_HEADERS
         value: accept,accept-encoding,authorization,content-type,dnt,origin,user-agent,x-csrftoken,x-requested-with,x-cart-token
       - key: DEPLOYMENT_TIMESTAMP
-        value: "2025-11-21-force-rebuild"
+        value: "2025-11-21-cors-headers-fix"
       - key: DJANGO_SUPERUSER_EMAIL
         value: admin@bestyy.com
       - key: DJANGO_SUPERUSER_PASSWORD
