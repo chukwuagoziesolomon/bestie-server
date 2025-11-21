@@ -68,7 +68,7 @@ PAYSTACK_SECRET_KEY = config('PAYSTACK_SECRET_KEY', default='')
 PAYSTACK_PUBLIC_KEY = config('PAYSTACK_PUBLIC_KEY', default='')
 PAYSTACK_BASE_URL = 'https://api.paystack.co'
 
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='bestie-server.onrender.com,bestyy-web.vercel.app,localhost,127.0.0.1,*.onrender.com,*.vercel.app').split(',')
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='bestie-server.onrender.com,bestyy-web.vercel.app,bestie-admin.vercel.app,localhost,127.0.0.1,*.onrender.com,*.vercel.app').split(',')
 # Ensure ngrok hosts are allowed during development
 ALLOWED_HOSTS = list(set(ALLOWED_HOSTS + ['.ngrok-free.app', 'f570d64ef94e.ngrok-free.app']))
 print(f"ALLOWED_HOSTS set to: {ALLOWED_HOSTS}")
@@ -264,6 +264,8 @@ CORS_ALLOWED_ORIGINS = [
     'http://127.0.0.1:3001',  # Admin frontend
     'http://localhost:8000',
     'http://127.0.0.1:8000',
+    'https://bestie-admin.vercel.app',  # Production admin frontend
+    'https://bestyy-web.vercel.app',  # Production customer frontend
 ]
 
 print(f"Default CORS_ALLOWED_ORIGINS: {CORS_ALLOWED_ORIGINS}")
