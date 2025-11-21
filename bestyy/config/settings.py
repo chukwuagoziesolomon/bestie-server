@@ -41,8 +41,12 @@ print(f"ALLOWED_HOSTS set to: {ALLOWED_HOSTS}")
 # ===================================
 # Django CORS headers - Configuration MUST come before middleware initialization
 
-# Allow all headers (this is the only way to ensure custom headers work with django-cors-headers)
-CORS_ALLOW_ALL_HEADERS = True
+# In django-cors-headers 3.14.0, we must use from corsheaders.defaults import default_headers
+from corsheaders.defaults import default_headers
+
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    'x-cart-token',
+]
 
 CORS_ALLOW_METHODS = [
     'DELETE',
@@ -58,12 +62,8 @@ CORS_PREFLIGHT_MAX_AGE = 86400  # 24 hours
 
 # Debug: Print CORS settings
 print(f"")
-print(f"🔴🔴🔴 CORS DEBUG - COMMIT e622f47d 🔴🔴🔴")
-print(f"CORS_ALLOW_ALL_ORIGINS: {True}")
-print(f"CORS_ALLOW_ALL_HEADERS: {CORS_ALLOW_ALL_HEADERS}")
-print(f"CORS_ALLOW_METHODS: {CORS_ALLOW_METHODS}")
-print(f"CORS_ALLOW_CREDENTIALS: {CORS_ALLOW_CREDENTIALS}")
-print(f"🔴🔴🔴 If you see this, settings.py IS loaded 🔴🔴🔴")
+print(f"🔴 CORS HEADERS CONFIGURED 🔴")
+print(f"CORS_ALLOW_HEADERS: {CORS_ALLOW_HEADERS}")
 print(f"")
 
 # Base URL for the application
@@ -283,8 +283,7 @@ REST_FRAMEWORK = {
 }
 
 # CORS settings
-# Temporarily allow all origins to test if settings are being applied
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_ALL_ORIGINS = False
 
 # CORS allowed origins - Prioritize environment variable
 env_cors_origins = config('CORS_ALLOWED_ORIGINS', default='')
