@@ -57,11 +57,14 @@ CORS_ALLOW_CREDENTIALS = True
 CORS_PREFLIGHT_MAX_AGE = 86400  # 24 hours
 
 # Debug: Print CORS settings
-print(f"=== CORS SETTINGS DEBUG ===")
+print(f"")
+print(f"🔴🔴🔴 CORS DEBUG - COMMIT e622f47d 🔴🔴🔴")
+print(f"CORS_ALLOW_ALL_ORIGINS: {True}")
 print(f"CORS_ALLOW_ALL_HEADERS: {CORS_ALLOW_ALL_HEADERS}")
 print(f"CORS_ALLOW_METHODS: {CORS_ALLOW_METHODS}")
 print(f"CORS_ALLOW_CREDENTIALS: {CORS_ALLOW_CREDENTIALS}")
-print(f"=============================")
+print(f"🔴🔴🔴 If you see this, settings.py IS loaded 🔴🔴🔴")
+print(f"")
 
 # Base URL for the application
 BASE_URL = config('BASE_URL', default='https://127.0.0.1:8000')
