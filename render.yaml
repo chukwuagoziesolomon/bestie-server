@@ -5,7 +5,7 @@ services:
     plan: free
     runtime: python-3.11.9
     buildCommand: ./bestyy/build.sh
-    startCommand: gunicorn bestyy.config.asgi:application -k uvicorn.workers.UvicornWorker -b 0.0.0.0:$PORT --workers 4
+    startCommand: gunicorn bestyy.config.asgi:application -k uvicorn.workers.UvicornWorker -b 0.0.0.0:$PORT --workers 2 --timeout 120 --graceful-timeout 30 --keep-alive 5
     autoDeploy: true
     envVars:
       - key: DJANGO_SETTINGS_MODULE
