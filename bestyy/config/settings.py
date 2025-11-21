@@ -280,7 +280,8 @@ REST_FRAMEWORK = {
 }
 
 # CORS settings
-CORS_ALLOW_ALL_ORIGINS = False
+# Temporarily allow all origins to test if settings are being applied
+CORS_ALLOW_ALL_ORIGINS = True
 
 # CORS allowed origins - Prioritize environment variable
 env_cors_origins = config('CORS_ALLOWED_ORIGINS', default='')
