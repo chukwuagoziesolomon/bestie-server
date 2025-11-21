@@ -5,7 +5,7 @@ services:
     plan: free
     runtime: python-3.11.9
     buildCommand: ./bestyy/build.sh
-    startCommand: python manage.py runserver 0.0.0.0:$PORT
+    startCommand: python manage.py runserver 0.0.0.0:$PORT --noreload --insecure
     autoDeploy: true
     envVars:
       - key: DJANGO_SETTINGS_MODULE
