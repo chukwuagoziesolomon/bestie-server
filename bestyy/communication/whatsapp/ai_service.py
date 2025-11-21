@@ -2,6 +2,7 @@ import requests
 import json
 import time
 import logging
+from decimal import Decimal
 from typing import Dict, List, Optional, Tuple
 from django.conf import settings
 from django.utils import timezone
@@ -11,6 +12,7 @@ from .nigerian_dishes_kb import (
     find_nigerian_dish, is_nigerian_dish, get_dish_info,
     NIGERIAN_DISHES_SYSTEM_PROMPT
 )
+from .utils import looks_like_address
 import re
 
 logger = logging.getLogger(__name__)
@@ -53,9 +55,11 @@ class WhatsAppAIService:
 
             if user_exists and message.conversation.user:
                 try:
-                    profile = message.conversation.user.profile
+                    from bestyy.core_features.user.models import UserProfile
+                    profile, created = UserProfile.objects.get_or_create(user=message.conversation.user)
                     user_needs_onboarding = not profile.onboarding_completed
-                except:
+                except Exception as e:
+                    logger.warning(f"Error checking user profile: {str(e)}")
                     # Profile doesn't exist yet
                     user_needs_onboarding = True
 
@@ -68,8 +72,10 @@ class WhatsAppAIService:
                 # Auto-complete onboarding for food orders from non-onboarded users
                 logger.info(f"Auto-completing onboarding for food order from user: {message.conversation.user}")
                 try:
-                    profile = message.conversation.user.profile
-                    profile.complete_onboarding()
+                    from bestyy.core_features.user.models import UserProfile
+                    profile, created = UserProfile.objects.get_or_create(user=message.conversation.user)
+                    if not profile.onboarding_completed:
+                        profile.complete_onboarding()
                     user_needs_onboarding = False
                     logger.info(f"Successfully auto-completed onboarding for user: {message.conversation.user}")
                 except Exception as e:
@@ -141,7 +147,8 @@ class WhatsAppAIService:
                 instruction_response = self.handle_special_instructions(
                     message.content,
                     message.conversation.user,
-                    context
+                    context,
+                    message
                 )
                 if instruction_response:
                     ai_response = {
@@ -403,7 +410,7 @@ class WhatsAppAIService:
         # Check for onboarding responses first
         if content_lower in ['ask', 'yes', 'sure', 'okay', 'ok', 'go ahead', 'please ask']:
             return 'onboarding_start'
-        elif content_lower == 'understood':
+        elif content_lower in ['understood', 'done', 'finished', 'complete', 'ready']:
             return 'terms_accepted'
         elif content_lower in ['skip', 'no thanks', 'later', 'not now']:
             return 'onboarding_skip'
@@ -421,7 +428,7 @@ class WhatsAppAIService:
             return 'budget_inquiry'
 
         # Check for order responses
-        if content_lower in ['yes', 'place this order now', 'order now']:
+        if content_lower in ['yes', 'place this order now', 'order now', 'confirm', 'done', 'ready', 'proceed', 'go ahead']:
             return 'order_confirmation'
         elif content_lower in ['more', 'show more', 'next']:
             return 'show_more_options'
@@ -502,7 +509,7 @@ class WhatsAppAIService:
                     "X-Title": self.app_name,
                 },
                 data=json.dumps({
-                    "model": "meta-llama/llama-3.3-8b-instruct:free",
+                    "model": "mistralai/mistral-7b-instruct",
                     "messages": [
                         {
                             "role": "system",
@@ -525,8 +532,9 @@ class WhatsAppAIService:
                             - recommendation_request: User wants suggestions or says they're hungry and undecided
                             - budget_inquiry: User asks for options under a budget or mentions a budget
 
-                             IMPORTANT: Always respond with ONLY the category name, nothing else.
-                             If you're unsure, choose the most appropriate category from the list above.
+                             CRITICAL: Respond with ONLY ONE category name from the list above. No explanations, no punctuation, no extra text.
+                             Example responses: "greeting" or "nigerian_food_request" or "order_confirmation"
+                             If unsure, pick the closest match from the exact list provided.
                              Pay special attention to Nigerian food names and local delicacies.
                              Look for orders that include extras like "with eba", "extra spicy", "no onions", etc.
 
@@ -545,20 +553,33 @@ class WhatsAppAIService:
 
             if response.status_code == 200:
                 response_data = response.json()
-                category = response_data['choices'][0]['message']['content'].strip().lower()
+                raw_content = response_data['choices'][0]['message']['content']
+
+                # Clean the response - remove special tokens and extra whitespace
+                category = raw_content.strip().lower()
+                # Remove common LLM special tokens
+                category = category.replace('<s>', '').replace('</s>', '').replace('<|', '').replace('|>', '').strip()
+
+                # Extract just the first word if there are multiple words
+                category = category.split()[0] if category else ''
+
+                # Handle empty or whitespace-only responses
+                if not category or category.isspace():
+                    logger.warning(f"LLM returned empty/whitespace category (raw: '{raw_content}'), using fallback")
+                    return self._fallback_categorize(content)
 
                 # Validate the category is one we expect
                 valid_categories = [
                     'greeting', 'order_inquiry', 'menu_request', 'delivery_status',
                     'payment_help', 'complaint', 'general_info', 'food_recommendation',
                     'specific_food_request', 'nigerian_food_request', 'food_order_with_extras', 'vendor_selection',
-                    'recommendation_request', 'budget_inquiry'
+                    'recommendation_request', 'budget_inquiry', 'order_confirmation'
                 ]
 
                 if category in valid_categories:
                     return category
                 else:
-                    logger.warning(f"LLM returned invalid category '{category}', expected one of: {valid_categories}")
+                    logger.warning(f"LLM returned invalid category '{category}' (raw: '{raw_content}'), expected one of: {valid_categories}")
 
             else:
                 logger.error(f"LLM categorization API error: {response.status_code} - {response.text}")
@@ -944,7 +965,7 @@ class WhatsAppAIService:
             List of recommended model names
         """
         return [
-            "meta-llama/llama-3.3-8b-instruct:free",  # Free model
+            "mistralai/mistral-7b-instruct",  # Primary model
             "openai/gpt-3.5-turbo",
             "openai/gpt-4",
             "openai/gpt-4-turbo",
@@ -952,10 +973,9 @@ class WhatsAppAIService:
             "anthropic/claude-3-sonnet",
             "google/gemini-pro",
             "meta-llama/llama-2-70b-chat",
-            "mistralai/mistral-7b-instruct",
         ]
     
-    def _format_vendor_options(self, order_response: Dict) -> str:
+    def _format_vendor_options(self, order_response: Dict, context=None) -> str:
         """
         Format vendor options for WhatsApp display with pictures, prices, and ratings
         Skip explanations, go straight to ordering
@@ -1130,10 +1150,11 @@ class WhatsAppAIService:
                 }
 
             elif category == 'onboarding_start':
-                # User agreed to onboarding - start collecting preferences
+                # User agreed to onboarding - start with first question
+                profile.set_onboarding_step('collecting_dietary_info')
                 greeting = context.get('casual_greeting', 'Great')
                 return {
-                    'message': f"{greeting}, thanks for allowing me to get to know you better! 😊\n\nSo can you help me answer these quick questions?\n\n1. Any meal plan, dietary restrictions or allergies I should know about? (e.g., \"no peanuts\", \"halal\", \"gluten-free\")\n\n2. What's your typical budget per meal? (e.g., \"₦1,000–₦2,000\" or \"cheap\", \"mid\", \"premium\")\n\n3. Would you like me to always check meals for you under this budget?\n\n4. When do you usually eat? (breakfast, lunch, dinner, late-night)\n\nJust reply naturally - I'm here to make this super easy for you! 💕",
+                    'message': f"{greeting}, thanks for allowing me to get to know you better! 😊\n\nLet's start with the first question:\n\n🍽️ *Question 1:* Any meal plan, dietary restrictions or allergies I should know about?\n\n(Examples: \"gluten-free\", \"no peanuts\", \"halal\", \"vegetarian\", or \"none\")\n\nJust reply naturally!",
                     'action': 'onboarding_started'
                 }
 
@@ -1183,7 +1204,7 @@ class WhatsAppAIService:
                 profile.dietary_restrictions = message_content
                 profile.set_onboarding_step('collecting_budget_info')
                 return {
-                    'message': "Thanks! Now for question 2:\n\nTypical budget per meal? (e.g., \"₦1,000–₦2,000\" or \"cheap\", \"mid\", \"premium\")",
+                    'message': "✅ Got it! Thanks for sharing your dietary preferences.\n\n💰 *Question 2:* What's your typical budget per meal?\n\n(Examples: \"₦1,000–₦2,000\", \"under 2000\", \"cheap\", \"mid\", \"premium\")\n\nJust tell me your usual range!",
                     'action': 'dietary_info_collected'
                 }
 
@@ -1192,7 +1213,7 @@ class WhatsAppAIService:
                 profile.budget_preference = message_content
                 profile.set_onboarding_step('budget_auto_check')
                 return {
-                    'message': "Got it! Question 3:\n\nWould you like me to always check meals for you under this budget?\n(Reply 'yes' or 'no')",
+                    'message': "💰 Perfect! I've noted your budget preference.\n\n🔄 *Question 3:* Would you like me to always check meals for you under this budget?\n\n(Reply 'yes' or 'no' - this helps me filter options automatically!)",
                     'action': 'budget_info_collected'
                 }
 
@@ -1201,7 +1222,7 @@ class WhatsAppAIService:
                 profile.budget_auto_check = message_content.lower() in ['yes', 'y', 'sure', 'okay']
                 profile.set_onboarding_step('meal_times')
                 return {
-                    'message': "Perfect! Final question:\n\nWhen do you usually eat? (breakfast, lunch, dinner, late-night)",
+                    'message': "✅ Great! I've set your budget preferences.\n\n🕐 *Question 4:* When do you usually eat?\n\n(Examples: \"breakfast\", \"lunch\", \"dinner\", \"late-night\", \"all day\")\n\nThis helps me suggest the right meals at the right time!",
                     'action': 'budget_auto_check_set'
                 }
 
@@ -1286,92 +1307,376 @@ class WhatsAppAIService:
             return True
             
         return False
-
-    def handle_special_instructions(self, message_content: str, user, context: Dict) -> Optional[Dict]:
+    def handle_special_instructions(self, message_content: str, user, context: Dict, message=None) -> Optional[Dict]:
         """
-        Handle special instructions and finalize the order
-        
+        Handle special instructions, order summary calculation, and finalize the order
+
         Args:
-            message_content: User's message with special instructions or confirmation
+            message_content: User's message with special instructions, confirmation, or address
             user: User object
             context: Additional context
-            
+
         Returns:
             Dict with order finalization response or None
         """
         try:
             content_lower = message_content.lower().strip()
-            
-            # Check for negative responses (proceed without special instructions)
-            negative_responses = ['no', 'that\'s all', 'thats all', 'nothing', 'no thanks', 'proceed', 'continue']
-            has_special_instructions = not any(response in content_lower for response in negative_responses)
-            
-            # Get the awaiting order (in a real implementation, you'd store this in conversation state)
+
+            # Handle order confirmation first (check for "yes" after showing order summary)
+            if content_lower in ['yes', 'confirm', 'ok', 'okay', 'sure', 'proceed', 'yes please']:
+                return self._handle_order_confirmation(user, context, message)
+
+            # Handle order summary flow - check if order needs address or if address was just provided
             from bestyy.restaurant_features.order.models import Order
             awaiting_order = Order.objects.filter(
-                user=user,
-                status='awaiting'
+                customer=user,
+                status__in=['awaiting', 'pending']
             ).order_by('-created_at').first()
-            
+
             if not awaiting_order:
                 return {
                     'action': 'no_awaiting_order',
                     'message': "❌ No pending order found. Please start a new order."
                 }
-            
-            # Update order with special instructions if provided
-            if has_special_instructions:
-                awaiting_order.special_instructions = message_content
+
+            # Check if this is a delivery address being provided instead of special instructions
+            # Process if it looks like an address (don't require awaiting_address flag to avoid loops)
+            if looks_like_address(content_lower):
+                # Clear the awaiting_address flag since we're processing the address now
+                if message and hasattr(message, 'conversation'):
+                    message.conversation.awaiting_address = False
+                    message.conversation.save()
+
+                # User is providing address, not special instructions
+                awaiting_order.delivery_address = message_content
                 awaiting_order.save()
+                logger.info(f"Saved delivery address for order {awaiting_order.id}: {message_content}")
+                # Fall through to order summary calculation below
+            else:
+                # Check for negative responses (proceed without special instructions)
+                negative_responses = ['no', 'that\'s all', 'thats all', 'nothing', 'no thanks', 'proceed', 'continue']
+                has_special_instructions = not any(response in content_lower for response in negative_responses)
+
+                # Update order with special instructions if provided
+                if has_special_instructions:
+                    awaiting_order.notes = message_content
+                    awaiting_order.save()
+                    logger.info(f"Saved special instructions for order {awaiting_order.id}: {message_content}")
+
+            # At this point, we have either special instructions saved or we're ready to proceed
+            # Check if order needs to be moved to pending status and order summary shown
+            if awaiting_order.status == 'awaiting':
+                awaiting_order.status = 'pending'
+                awaiting_order.save()
+                logger.info(f"Moved order {awaiting_order.id} to pending status")
+
+            # Calculate and show order summary before payment
+            if awaiting_order.delivery_address:
+                return self._calculate_and_show_order_summary(awaiting_order, user, context, message)
+            else:
+                # No delivery address yet, ask for it
+                return {
+                    'action': 'address_required',
+                    'message': f"📍 *Almost ready!* Before we proceed to payment, I need your delivery address.\n\n"
+                              f"🏠 Please provide your full delivery address:\n\n"
+                              f"💡 Example: '123 Lagos Street, Ikeja, Lagos' or 'Victoria Island, Lagos'\n\n"
+                              f"🔍 I'll calculate exact delivery fees based on your location!"
+                }
+
+        except Exception as e:
+            logger.error(f"Error handling special instructions: {str(e)}")
+            return None
+
+
+            # Check if order is awaiting (needs special instructions) or pending (needs address)
+            if awaiting_order.status == 'awaiting':
+                # Still collecting special instructions
+                # Update order with special instructions if provided
+                if has_special_instructions:
+                    awaiting_order.notes = message_content
+                    awaiting_order.save()
+
+                # Finalize the order (move to pending status and ask for delivery address)
+                awaiting_order.status = 'pending'
+                awaiting_order.save()
+            else:
+                # Order is already pending, this must be the delivery address
+                awaiting_order.delivery_address = message_content
+                awaiting_order.save()
+
+                # Calculate distance and delivery fee using Google Maps
+                logger.info(f"Calculating distance and fee for order {awaiting_order.id} with address: {message_content}")
+                logger.info(f"Order before distance calc - total_amount: {awaiting_order.total_amount}, delivery_fee: {awaiting_order.delivery_fee}")
+
+                try:
+                    distance_result = awaiting_order.calculate_distance_and_fee()
+                    if distance_result:
+                        logger.info(f"Distance calculation successful: distance={distance_result.get('distance_km')}km, fee={distance_result.get('delivery_price')}")
+                        # Refresh order from database to get updated values
+                        awaiting_order.refresh_from_db()
+                        logger.info(f"After distance calc - total_amount: {awaiting_order.total_amount}, delivery_fee: {awaiting_order.delivery_fee}")
+                    else:
+                        logger.warning(f"Distance calculation failed for order {awaiting_order.id} - applying default delivery fee")
+                        # Always apply a default delivery fee since distance calc failed
+                        default_delivery_fee = Decimal('700.00')  # Default delivery fee
+                        awaiting_order.delivery_fee = default_delivery_fee
+
+                        # Ensure order has a valid food amount
+                        food_amount = awaiting_order.total_amount
+                        if food_amount <= 0:
+                            # Force a minimum food amount since order creation failed
+                            food_amount = Decimal('2500.00')
+                            logger.warning(f"Order has no food amount, setting minimum: {food_amount}")
+                            awaiting_order.total_amount = food_amount
+
+                        # Recalculate total with delivery fee
+                        new_total = food_amount + default_delivery_fee
+                        awaiting_order.total_amount = new_total
+                        awaiting_order.save()
+                        logger.info(f"Applied default delivery fee: food={food_amount}, delivery={default_delivery_fee}, new_total={new_total}")
+                except Exception as calc_error:
+                    logger.error(f"Error during distance calculation for order {awaiting_order.id}: {str(calc_error)}")
+                    # Apply emergency defaults
+                    if awaiting_order.total_amount <= 0:
+                        awaiting_order.total_amount = Decimal('2500.00')
+                    if not awaiting_order.delivery_fee:
+                        awaiting_order.delivery_fee = Decimal('700.00')
+                        awaiting_order.total_amount = awaiting_order.total_amount + awaiting_order.delivery_fee
+                    awaiting_order.save()
+                    logger.info(f"Applied emergency defaults for order {awaiting_order.id}")
+
+                has_special_instructions = False  # Don't show special instructions message
             
-            # Finalize the order (move to pending status and ask for delivery address)
-            awaiting_order.status = 'pending'
-            awaiting_order.save()
+            # Create dedicated virtual account for bank transfer
+            bank_account = None
             
-            # Generate payment link
-            payment_link = None
-            try:
-                payment_result = self.order_service.paystack_service.initialize_transaction({
-                    'email': user.email,
-                    'amount': int(awaiting_order.total_price * 100),  # Convert to kobo
-                    'reference': f"ORDER-{awaiting_order.id}",
-                    'callback_url': f"{self.order_service.base_url}/api/whatsapp/payment/callback/",
-                    'metadata': {
-                        'order_id': awaiting_order.id,
-                        'user_id': user.id,
-                        'vendor_id': awaiting_order.vendor.id
+            # Check if Paystack is configured
+            from django.conf import settings
+            paystack_key = getattr(settings, 'PAYSTACK_SECRET_KEY', '')
+            if not paystack_key or paystack_key == '':
+                logger.error("Paystack secret key not configured - skipping payment account creation")
+                bank_account = None
+            else:
+                logger.info(f"Paystack key configured: YES")
+
+                # Test Paystack connectivity
+                try:
+                    test_response = self.order_service.paystack_service._make_request('GET', '/bank')
+                    if test_response and test_response.get('status'):
+                        logger.info("Paystack API connectivity test: PASSED")
+                    else:
+                        logger.warning(f"Paystack API connectivity test: FAILED - {test_response}")
+                except Exception as e:
+                    logger.warning(f"Paystack API connectivity test: FAILED - {str(e)}")
+
+                # Validate required fields
+                if not user.email:
+                    logger.error(f"User {user.id} has no email address")
+                    return {
+                        'action': 'payment_failed',
+                        'message': "❌ Unable to process payment: No email address found. Please update your profile."
                     }
-                })
-                if payment_result and payment_result.get('success'):
-                    payment_link = payment_result.get('authorization_url')
-            except Exception as e:
-                logger.warning(f"Payment link generation failed: {str(e)}")
+
+                # Ensure minimum order amount (Paystack minimum is ₦100)
+                min_amount = Decimal('100.00')  # ₦100 minimum
+                order_amount = max(awaiting_order.total_amount, min_amount)
+                logger.info(f"Order amount: {awaiting_order.total_amount}, using: {order_amount}")
+
+                # Generate unique reference for the order
+                import uuid
+                unique_ref = f"ORDER-{awaiting_order.id}-{uuid.uuid4().hex[:8]}"
+
+                # Get phone number from conversation - WhatsApp should always have this
+                phone_number = None
+                if hasattr(message, 'conversation') and message.conversation.phone_number:
+                    phone_number = message.conversation.phone_number
+                    logger.info(f"Raw phone number from conversation: {phone_number}")
+                elif hasattr(user, 'profile') and user.profile and user.profile.phone:
+                    phone_number = user.profile.phone
+                    logger.info(f"Phone number from user profile: {phone_number}")
+
+                # Ensure we have a phone number - required for Paystack
+                if not phone_number:
+                    logger.error(f"No phone number available for user {user.id}")
+                    return {
+                        'action': 'payment_failed',
+                        'message': "❌ Phone number is required for payment setup. Please ensure your WhatsApp number is registered."
+                    }
+
+                # Format phone number for Paystack (ensure 234 format without +)
+                original_phone = phone_number
+                if phone_number.startswith('0') and len(phone_number) == 11:
+                    # Convert 08012345678 to 2348012345678
+                    phone_number = '234' + phone_number[1:]
+                elif phone_number.startswith('234') and len(phone_number) == 13:
+                    # Already in correct format for Paystack
+                    pass
+                elif phone_number.startswith('+234') and len(phone_number) == 14:
+                    # Remove + for Paystack API
+                    phone_number = phone_number[1:]
+                else:
+                    # Try to fix other formats
+                    if len(phone_number) == 10 and phone_number.isdigit():
+                        phone_number = '234' + phone_number
+                    elif len(phone_number) == 13 and phone_number.startswith('234'):
+                        pass  # already correct
+                    else:
+                        logger.error(f"Unable to format phone number: {original_phone}")
+                        return {
+                            'action': 'payment_failed',
+                            'message': "❌ Invalid phone number format. Please contact support."
+                        }
+
+                logger.info(f"Formatted phone number for Paystack: {original_phone} -> {phone_number}")
+
+                # Final validation - ensure we have a valid phone number
+                if not phone_number or not phone_number.startswith('234') or len(phone_number) != 13:
+                    logger.error(f"Final validation failed for phone number: {phone_number}")
+                    return {
+                        'action': 'payment_failed',
+                        'message': "❌ Phone number format is invalid. Please contact support."
+                    }
+
+                # Only try Paystack if we have a valid phone number
+                if phone_number:
+                    # Use Pay with Transfer
+                    logger.info(f"Creating Pay with Transfer for user {user.id} with phone: {phone_number}")
+                    account_result = self.order_service.paystack_service.initialize_pay_with_transfer(
+                        email=user.email,
+                        amount=order_amount,
+                        reference=unique_ref,
+                        expiry_hours=8
+                    )
+                    logger.info(f"Pay with Transfer result: {account_result}")
+
+                    # If Pay with Transfer fails, return error - no fallback
+                    if not account_result.get('success'):
+                        error_msg = account_result.get('error', 'Unknown error')
+                        logger.error(f"Pay with Transfer failed for WhatsApp user {user.id}: {error_msg}")
+                        return {
+                            'action': 'payment_failed',
+                            'message': f"❌ Payment setup failed: {error_msg}. Please try again or contact support."
+                        }
+
+                    bank_account = account_result.get('account_details', {})
+                    logger.info(f"Bank account created successfully: {bank_account}")
+                    # Store reference for webhook processing
+                    awaiting_order.payment_reference = bank_account.get('reference', unique_ref)
+                    awaiting_order.save()
+                    logger.info(f"Payment reference stored: {awaiting_order.payment_reference}")
+                else:
+                    # Skip Paystack and go directly to fallback
+                    logger.warning(f"No valid phone number for Paystack, using fallback account")
+                    bank_account = None
             
             # Prepare response message
-            if has_special_instructions:
+            if awaiting_order.status == 'pending' and awaiting_order.delivery_address:
+                # Address was just provided, show payment message
+                message = f"✅ *Perfect!* Your delivery address has been saved.\n\n"
+            elif has_special_instructions:
                 message = f"✅ *Perfect!* Your order has been updated with your special instructions.\n\n"
             else:
                 message = f"✅ *Great!* Your order is ready to proceed.\n\n"
-            
+
+            # Final check of order totals before displaying
+            logger.info(f"Final order check - total_amount: {awaiting_order.total_amount}, delivery_fee: {awaiting_order.delivery_fee}")
+
             message += f"📋 *Order Summary:*\n"
             message += f"• Restaurant: {awaiting_order.vendor.business_name}\n"
-            message += f"• Total: ₦{awaiting_order.total_price:,.0f}\n"
-            if awaiting_order.special_instructions:
-                message += f"• Special Instructions: {awaiting_order.special_instructions}\n"
-            message += f"\n🏠 *Please provide your delivery address* and we'll process your payment.\n"
-            if payment_link:
-                message += f"💳 *Payment Link:* {payment_link}"
+
+            # Calculate display amounts - ensure we have valid totals
+            food_amount = awaiting_order.total_amount
+            delivery_fee = awaiting_order.delivery_fee or 0
+
+            # Ensure minimum food amount
+            if food_amount <= 0:
+                food_amount = 2500  # Minimum food amount
+                logger.warning(f"Order food amount was 0, setting to minimum: {food_amount}")
+
+            # Show breakdown if delivery fee exists
+            if delivery_fee > 0:
+                total_with_delivery = food_amount + delivery_fee
+                message += f"• Food: ₦{food_amount:,.0f}\n"
+                message += f"• Delivery: ₦{delivery_fee:,.0f}\n"
+                message += f"• Total: ₦{total_with_delivery:,.0f}\n"
+                display_total = total_with_delivery
+            else:
+                message += f"• Total: ₦{food_amount:,.0f}\n"
+                display_total = food_amount
+
+            logger.info(f"Display amounts - food: {food_amount}, delivery: {delivery_fee}, total: {display_total}")
+
+            if awaiting_order.delivery_address:
+                message += f"• Delivery Address: {awaiting_order.delivery_address}\n"
+            if awaiting_order.notes:
+                message += f"• Notes: {awaiting_order.notes}\n"
+            message += f"\n💳 *Payment Details:*\n"
+            logger.info(f"Formatting payment details - bank_account: {bank_account is not None}")
+            if bank_account:
+                bank_name = getattr(bank_account, 'bank_name', 'Titan Paystack')
+                account_name = getattr(bank_account, 'account_name', 'Bestyy Customer')
+                account_number = getattr(bank_account, 'account_number', awaiting_order.payment_reference)
+                reference = awaiting_order.payment_reference
+
+                logger.info(f"Payment details - bank_name: '{bank_name}', account_name: '{account_name}', account_number: '{account_number}', reference: '{reference}'")
+
+                # Always show payment details for fallback accounts, or check validity for real accounts
+                is_fallback = getattr(bank_account, 'assignment_type', '') == 'whatsapp_fallback'
+                has_valid_details = (account_number and account_name and bank_name and
+                                   account_number.strip() and account_name.strip() and bank_name.strip())
+
+                if is_fallback or has_valid_details:
+                    # Only show payment details if we have real valid account data
+                    if (bank_name and account_name and account_number and
+                        bank_name.strip() and account_name.strip() and account_number.strip() and
+                        account_number != '1234567890' and bank_name.lower() not in ['access bank', 'fallback']):
+
+                        message += f"🏦 *Bank:* {bank_name}\n"
+                        message += f"📋 *Account Name:* {account_name}\n"
+                        message += f"🔢 *Account Number:* {account_number}\n"
+                        message += f"📝 *Reference:* {reference or account_number}\n\n"
+                        message += f"💰 *Please transfer ₦{awaiting_order.total_amount:,.0f} to the account above.*\n"
+                        message += f"📱 *Your order will be confirmed once payment is received.*\n\n"
+                        message += f"Thank you for choosing Bestyy! 🎉"
+                    else:
+                        message += f"❌ *Payment setup temporarily unavailable.*\n"
+                        message += f"Please contact support or try again later.\n\n"
+                        message += f"Thank you for choosing Bestyy! 🎉"
+                else:
+                    logger.warning("Bank account created but missing account details")
+                    message += f"⚠️ *Payment setup in progress.*\n"
+                    message += f"Please wait a moment and check your order status for payment details.\n\n"
+                    message += f"Thank you for choosing Bestyy! 🎉"
+            else:
+                logger.error("Paystack PwT creation failed - no bank account available")
+                message += f"❌ *Payment service temporarily unavailable.*\n"
+                message += f"Please contact support or try again later.\n\n"
+                message += f"Thank you for choosing Bestyy! 🎉"
             
+            # Determine the correct action based on what was just processed
+            if awaiting_order.delivery_address and bank_account:
+                action = 'order_completed'
+            elif awaiting_order.delivery_address:
+                action = 'address_saved'
+            else:
+                action = 'order_finalized'
+
             return {
-                'action': 'order_finalized',
+                'action': action,
                 'order': {
                     'id': awaiting_order.id,
                     'order_number': f"#{awaiting_order.id}",
                     'vendor': awaiting_order.vendor.business_name,
-                    'total_amount': float(awaiting_order.total_price),
-                    'special_instructions': awaiting_order.special_instructions,
+                    'total_amount': float(display_total),
+                    'delivery_address': awaiting_order.delivery_address,
+                    'notes': awaiting_order.notes,
                     'status': awaiting_order.status,
-                    'payment_link': payment_link
+                    'payment_reference': awaiting_order.payment_reference,
+                    'bank_account': {
+                        'bank_name': getattr(bank_account, 'bank_name', None) if bank_account else None,
+                        'account_number': getattr(bank_account, 'account_number', None) if bank_account else None,
+                        'account_name': getattr(bank_account, 'account_name', None) if bank_account else None
+                    } if bank_account else None
                 },
                 'message': message
             }
@@ -1380,88 +1685,435 @@ class WhatsAppAIService:
             logger.error(f"Error handling special instructions: {str(e)}")
             return None
 
-    def handle_restaurant_selection(self, message_content: str, user, context: Dict) -> Optional[Dict]:
+    def _handle_order_confirmation(self, user, context, message=None) -> Optional[Dict]:
         """
-        Handle restaurant selection when user types a number (1, 2, 3, etc.)
-        Creates order in 'awaiting' state and asks for special instructions
-        
-        Args:
-            message_content: User's message (should be a number)
-            user: User object
-            context: Additional context
-            
-        Returns:
-            Dict with order creation response or None
+        Handle user confirmation after showing order summary - proceed to payment setup
         """
         try:
-            # Check if message is a number
-            if not message_content.strip().isdigit():
-                return None
-                
-            selection = int(message_content.strip())
-            
-            # Get the last vendor search from context or conversation
-            # For now, we'll search again to get the vendor
-            # In a real implementation, you'd store the search results in the conversation context
-            
-            # Get the food type from the last search (this is a simplified approach)
-            # In production, you'd store this in the conversation state
-            food_type = context.get('last_food_type', 'egusi soup')
-            
-            # Search for vendors again to get the selected one
-            vendor_result = self.order_service.search_vendors_by_food(food_type, limit=selection, offset=selection-1)
-            
-            if not vendor_result.get('success') or not vendor_result.get('vendors'):
-                return None
-                
-            selected_vendor = vendor_result['vendors'][0]  # Get the first (and only) vendor
-            
-            # Create order with the selected vendor in 'awaiting' state
-            items_data = []
-            for item in selected_vendor.get('menu_items', []):
-                items_data.append({
-                    'menu_item_id': item['id'],
-                    'quantity': 1  # Default quantity
-                })
-            
-            # Create the order in awaiting state
-            order_result = self.order_service.create_awaiting_order_from_whatsapp(
-                user=user,
-                vendor_id=selected_vendor['id'],
-                items_data=items_data
-            )
-            
-            if order_result.get('success'):
-                # Set context to track awaiting order
-                context['awaiting_order'] = True
-                context['awaiting_order_id'] = order_result['order']['id']
-                
-                greeting = context.get('casual_greeting', 'Great choice')
+            from bestyy.restaurant_features.order.models import Order
+
+            # Find the awaiting/pending order
+            awaiting_order = Order.objects.filter(
+                customer=user,
+                status__in=['awaiting', 'pending']
+            ).order_by('-created_at').first()
+
+            if not awaiting_order:
                 return {
-                    'action': 'order_awaiting',
-                    'order': order_result['order'],
-                    'vendor': selected_vendor,
-                    'message': f"🍽️ *{greeting}!* I've prepared your order from {selected_vendor['name']}:\n\n"
-                              f"📋 *Your Order:*\n"
-                              f"• Eba with Egusi Soup - ₦2,500\n"
-                              f"💰 *Total: ₦{order_result['order']['total_amount']:,.0f}*\n\n"
-                              f"❓ *Is that all?* Do you want to add anything else or do you have any special instructions for the vendor?\n\n"
-                              f"💬 *Reply with:*\n"
-                              f"• Your special instructions (if any)\n"
-                              f"• 'No' or 'That's all' to proceed\n"
-                              f"• 'Add [item name]' to add more items\n\n"
-                              f"I'm here to make this perfect for you! 💕"
+                    'action': 'no_awaiting_order',
+                    'message': "❌ No pending order found. Please start a new order."
+                }
+
+            # Proceed to payment setup as before
+            # Create dedicated virtual account for bank transfer
+            bank_account = None
+
+            # Check if Paystack is configured
+            from django.conf import settings
+            paystack_key = getattr(settings, 'PAYSTACK_SECRET_KEY', '')
+            if not paystack_key or paystack_key == '':
+                logger.error("Paystack secret key not configured - skipping payment account creation")
+                return {
+                    'action': 'payment_failed',
+                    'message': "❌ Payment service temporarily unavailable. Please contact support."
+                }
+
+            # Validate required fields
+            if not user.email:
+                logger.error(f"User {user.id} has no email address")
+                return {
+                    'action': 'payment_failed',
+                    'message': "❌ Unable to process payment: No email address found. Please update your profile."
+                }
+
+            # Ensure minimum order amount (Paystack minimum is ₦100)
+            min_amount = Decimal('100.00')
+            order_amount = max(awaiting_order.total_amount, min_amount)
+
+            # Test Paystack connectivity
+            try:
+                test_response = self.order_service.paystack_service._make_request('GET', '/bank')
+                if not test_response or not test_response.get('status'):
+                    logger.warning("Paystack API connectivity test failed")
+                    return {
+                        'action': 'payment_failed',
+                        'message': "❌ Payment service temporarily unavailable. Please try again later."
+                    }
+            except Exception as e:
+                logger.warning(f"Paystack API connectivity test failed: {str(e)}")
+                return {
+                    'action': 'payment_failed',
+                    'message': "❌ Payment service temporarily unavailable. Please try again later."
+                }
+
+            # Generate unique reference
+            import uuid
+            unique_ref = f"ORDER-{awaiting_order.id}-{uuid.uuid4().hex[:8]}"
+
+            # Get phone number
+            phone_number = None
+            if hasattr(message, 'conversation') and message.conversation.phone_number:
+                phone_number = message.conversation.phone_number
+            elif hasattr(user, 'profile') and user.profile and user.profile.phone:
+                phone_number = user.profile.phone
+
+            if not phone_number:
+                return {
+                    'action': 'payment_failed',
+                    'message': "❌ Phone number is required for payment setup. Please ensure your WhatsApp number is registered."
+                }
+
+            # Format phone number
+            if phone_number.startswith('0') and len(phone_number) == 11:
+                phone_number = '234' + phone_number[1:]
+            elif phone_number.startswith('+234'):
+                phone_number = phone_number[1:]
+
+            if not phone_number or not phone_number.startswith('234') or len(phone_number) != 13:
+                return {
+                    'action': 'payment_failed',
+                    'message': "❌ Invalid phone number format. Please contact support."
+                }
+
+            # Use Pay with Transfer for payment
+            account_result = self.order_service.paystack_service.initialize_pay_with_transfer(
+                email=user.email,
+                amount=order_amount,
+                reference=unique_ref,
+                expiry_hours=8
+            )
+
+            bank_account = None
+            if account_result.get('success'):
+                bank_account = account_result.get('account_details', {})
+                awaiting_order.payment_reference = bank_account.get('reference', unique_ref)
+                logger.info(f"Using Pay with Transfer account: {bank_account.get('account_number')}")
+            else:
+                error_msg = account_result.get('error', 'Unknown error')
+                logger.error(f"Pay with Transfer failed: {error_msg}")
+
+                # Provide clear user message about payment issues
+                return {
+                    'action': 'payment_failed',
+                    'message': "❌ Payment setup temporarily unavailable. Our system is experiencing issues creating payment accounts.\n\n"
+                              "We've been notified and are working to resolve this. Please try again in a few minutes."
+                }
+
+            awaiting_order.save()
+
+            # Format success message with order summary and payment details
+            message = f"✅ *Perfect! Your order is confirmed.*\n\n"
+
+            # Order summary
+            message += f"📋 *Order Summary:*\n"
+            message += f"• Restaurant: {awaiting_order.vendor.business_name}\n"
+
+            food_amount = awaiting_order.total_amount
+            delivery_fee = awaiting_order.delivery_fee or 0
+
+            if delivery_fee > 0:
+                total_with_delivery = food_amount + delivery_fee
+                message += f"• Food: ₦{food_amount:,.0f}\n"
+                message += f"• Delivery: ₦{delivery_fee:,.0f}\n"
+                message += f"• Total: ₦{total_with_delivery:,.0f}\n"
+            else:
+                message += f"• Total: ₦{food_amount:,.0f}\n"
+
+            if awaiting_order.delivery_address:
+                message += f"• Delivery Address: {awaiting_order.delivery_address}\n"
+            if awaiting_order.notes:
+                message += f"• Notes: {awaiting_order.notes}\n"
+
+            message += f"\n💳 *Payment Details:*\n"
+
+            bank_name = getattr(bank_account, 'bank_name', 'Paystack Bank')
+            account_name = getattr(bank_account, 'account_name', 'Bestyy Customer')
+            account_number = getattr(bank_account, 'account_number', awaiting_order.payment_reference)
+
+            if bank_name and account_name and account_number:
+                message += f"🏦 *Bank:* {bank_name}\n"
+                message += f"📋 *Account Name:* {account_name}\n"
+                message += f"🔢 *Account Number:* {account_number}\n"
+                message += f"📝 *Reference:* {awaiting_order.payment_reference}\n\n"
+                message += f"💰 *Please transfer ₦{awaiting_order.total_amount:,.0f} to the account above.*\n"
+                message += f"📱 *Your order will be confirmed once payment is received.*\n\n"
+                message += f"Thank you for choosing Bestyy! 🎉"
+
+                return {
+                    'action': 'payment_setup_complete',
+                    'order': {
+                        'id': awaiting_order.id,
+                        'order_number': f"#{awaiting_order.id}",
+                        'vendor': awaiting_order.vendor.business_name,
+                        'total_amount': float(awaiting_order.total_amount),
+                        'delivery_address': awaiting_order.delivery_address,
+                        'notes': awaiting_order.notes,
+                        'status': awaiting_order.status,
+                        'payment_reference': awaiting_order.payment_reference
+                    },
+                    'message': message
                 }
             else:
                 return {
-                    'action': 'order_failed',
-                    'error': order_result.get('error', 'Unknown error'),
-                    'message': f"❌ Sorry, we couldn't create your order. {order_result.get('error', 'Please try again.')}"
+                    'action': 'payment_failed',
+                    'message': "❌ Payment account setup completed but account details are missing. Please contact support."
                 }
-                
+
         except Exception as e:
-            logger.error(f"Error handling restaurant selection: {str(e)}")
-            return None
+            logger.error(f"Error handling order confirmation: {str(e)}")
+            return {
+                'action': 'confirmation_failed',
+                'message': "❌ Sorry, there was an error processing your confirmation. Please try again."
+            }
+
+    def _calculate_and_show_order_summary(self, order, user, context, message=None) -> Optional[Dict]:
+        """
+        Calculate order summary using OrderSummaryView API and show to user for confirmation
+        """
+        try:
+            from django.conf import settings
+            import requests
+
+            # Prepare cart items data from order
+            cart_items = []
+            if hasattr(order, 'order_items') and order.order_items:
+                for item in order.order_items.all():
+                    cart_items.append({
+                        'menu_item_id': item.menu_item.id,
+                        'quantity': item.quantity
+                    })
+            else:
+                # Fallback: assume single item from order total
+                logger.warning(f"Order {order.id} has no order_items, using fallback calculation")
+
+            # Prepare payload for OrderSummaryView API
+            summary_payload = {
+                'cart_items': cart_items,
+                'delivery_address': order.delivery_address,
+                'vendor_id': order.vendor.id
+            }
+
+            # Call OrderSummaryView API
+            base_url = getattr(settings, 'BASE_URL', 'http://127.0.0.1:8000')
+            api_url = f"{base_url}/api/user/order-summary/"
+
+            response = requests.post(api_url, json=summary_payload, timeout=10)
+
+            if response.status_code == 200:
+                summary_data = response.json()
+
+                if summary_data.get('success'):
+                    summary = summary_data.get('summary', {})
+                    delivery_info = summary_data.get('delivery_info', {})
+                    items = summary_data.get('items', [])
+
+                    # Update order with calculated fees
+                    order.subtotal = Decimal(str(summary.get('subtotal', 0)))
+                    order.delivery_fee = Decimal(str(summary.get('delivery_fee', 0)))
+                    order.total_amount = Decimal(str(summary.get('grand_total', 0)))
+                    order.save()
+
+                    # Format order summary message for user confirmation
+                    message = f"📋 *Order Summary - Please Confirm*\n\n"
+                    message += f"🏪 *Restaurant:* {delivery_info.get('vendor', {}).get('name', order.vendor.business_name)}\n\n"
+
+                    # List items
+                    message += f"🍽️ *Items:*\n"
+                    for item in items:
+                        message += f"• {item.get('name', 'Item')} x{item.get('quantity', 1)} = ₦{item.get('total', 0):,.0f}\n"
+
+                    # Pricing breakdown
+                    message += f"\n💰 *Pricing:*\n"
+                    message += f"• Subtotal: ₦{summary.get('subtotal', 0):,.0f}\n"
+                    if summary.get('delivery_fee', 0) > 0:
+                        message += f"• Delivery Fee: ₦{summary.get('delivery_fee', 0):,.0f}\n"
+                    if summary.get('platform_fee', 0) > 0:
+                        message += f"• Platform Fee: ₦{summary.get('platform_fee', 0):,.0f}\n"
+                    message += f"• *Total: ₦{summary.get('grand_total', 0):,.0f}*\n\n"
+
+                    # Delivery info
+                    if delivery_info.get('estimated_time'):
+                        message += f"🚀 *Estimated Delivery:* {delivery_info.get('estimated_time', '30-45 minutes')}\n"
+                    if delivery_info.get('distance_text'):
+                        message += f"📍 *Distance:* {delivery_info.get('distance_text', 'Calculating...')}\n"
+
+                    message += f"\n✅ *Is this order correct?*\n\n"
+                    message += f"💬 *Reply 'YES' to confirm and proceed to payment*\n"
+                    message += f"💬 *Reply 'NO' to cancel or make changes*\n\n"
+                    message += f"Let me know if everything looks good! 👍"
+
+                    return {
+                        'action': 'order_summary_shown',
+                        'order': {
+                            'id': order.id,
+                            'vendor': order.vendor.business_name,
+                            'total_amount': float(order.total_amount),
+                            'delivery_address': order.delivery_address,
+                            'notes': order.notes
+                        },
+                        'message': message
+                    }
+                else:
+                    error_msg = summary_data.get('error', 'Unknown error calculating order summary')
+                    logger.error(f"OrderSummaryView API error: {error_msg}")
+
+                    # Fallback: show basic order info and ask for confirmation
+                    message = f"📋 *Order Summary*\n\n"
+                    message += f"🏪 *Restaurant:* {order.vendor.business_name}\n"
+                    message += f"💰 *Total:* ₦{order.total_amount:,.0f}\n"
+
+                    if order.delivery_address:
+                        message += f"📍 *Address:* {order.delivery_address}\n"
+
+                    message += f"\n✅ *Ready to proceed to payment?*\n\n"
+                    message += f"💬 *Reply 'YES' to continue*\n"
+                    message += f"💬 *Reply 'NO' to make changes*\n\n"
+
+                    message += f"There's a small delay calculating exact fees, but your order looks good!"
+
+                    return {
+                        'action': 'order_summary_shown_basic',
+                        'order': {
+                            'id': order.id,
+                            'vendor': order.vendor.business_name,
+                            'total_amount': float(order.total_amount),
+                            'delivery_address': order.delivery_address,
+                            'notes': order.notes
+                        },
+                        'message': message
+                    }
+            else:
+                logger.error(f"OrderSummaryView API request failed: {response.status_code} - {response.text}")
+
+                # Complete fallback
+                message = f"📋 *Ready to proceed with your order?*\n\n"
+                message += f"🏪 *Restaurant:* {order.vendor.business_name}\n"
+                message += f"💰 *Total:* ₦{order.total_amount:,.0f}\n"
+
+                if order.delivery_address:
+                    message += f"📍 *Address:* {order.delivery_address}\n"
+
+                message += f"\n✅ *Does this look correct?*\n\n"
+                message += f"💬 *Reply 'YES' to confirm and set up payment*\n"
+                message += f"💬 *Reply 'NO' to cancel*\n\n"
+
+                return {
+                    'action': 'order_summary_fallback',
+                    'order': {
+                        'id': order.id,
+                        'vendor': order.vendor.business_name,
+                        'total_amount': float(order.total_amount),
+                        'delivery_address': order.delivery_address,
+                        'notes': order.notes
+                    },
+                    'message': message
+                }
+
+        except Exception as e:
+            logger.error(f"Error calculating order summary: {str(e)}")
+
+            # Emergency fallback
+            message = f"📋 *Order Ready*\n\n"
+            message += f"🏪 *Restaurant:* {order.vendor.business_name}\n"
+            message += f"💰 *Total:* ₦{order.total_amount:,.0f}\n"
+
+            if order.delivery_address:
+                message += f"📍 *Address:* {order.delivery_address}\n"
+
+            message += f"\n✅ *Confirm Order?*\n\n"
+            message += f"💬 *Reply 'YES' to proceed*\n"
+
+            return {
+                'action': 'order_summary_emergency_fallback',
+                'order': {
+                    'id': order.id,
+                    'vendor': order.vendor.business_name if order.vendor else 'Unknown',
+                    'total_amount': float(order.total_amount),
+                    'delivery_address': order.delivery_address,
+                    'notes': order.notes
+                },
+                'message': message
+            }
+
+def handle_special_instructions(self, message_content: str, user, context: Dict, message=None) -> Optional[Dict]:
+    """
+    Handle special instructions, order summary calculation, and finalize the order
+
+    Args:
+        message_content: User's message with special instructions, confirmation, or address
+        user: User object
+        context: Additional context
+
+    Returns:
+        Dict with order finalization response or None
+    """
+    try:
+        content_lower = message_content.lower().strip()
+
+        # Handle order confirmation first (check for "yes" after showing order summary)
+        if content_lower in ['yes', 'confirm', 'ok', 'okay', 'sure', 'proceed', 'yes please']:
+            return self._handle_order_confirmation(user, context, message)
+
+        # Handle order summary flow - check if order needs address or if address was just provided
+        from bestyy.restaurant_features.order.models import Order
+        awaiting_order = Order.objects.filter(
+            customer=user,
+            status__in=['awaiting', 'pending']
+        ).order_by('-created_at').first()
+
+        if not awaiting_order:
+            return {
+                'action': 'no_awaiting_order',
+                'message': "❌ No pending order found. Please start a new order."
+            }
+
+        # Check if this is a delivery address being provided instead of special instructions
+        # REMOVE the awaiting_address check here - just check if it looks like an address
+        if looks_like_address(content_lower):
+            # Clear the awaiting_address flag since we're processing the address now
+            if message and hasattr(message, 'conversation'):
+                message.conversation.awaiting_address = False
+                message.conversation.save()
+
+            # User is providing address, not special instructions
+            awaiting_order.delivery_address = message_content
+            awaiting_order.save()
+            logger.info(f"Saved delivery address for order {awaiting_order.id}: {message_content}")
+            # Fall through to order summary calculation below
+        else:
+            # Check for negative responses (proceed without special instructions)
+            negative_responses = ['no', 'that\'s all', 'thats all', 'nothing', 'no thanks', 'proceed', 'continue']
+            has_special_instructions = not any(response in content_lower for response in negative_responses)
+
+            # Update order with special instructions if provided
+            if has_special_instructions:
+                awaiting_order.notes = message_content
+                awaiting_order.save()
+                logger.info(f"Saved special instructions for order {awaiting_order.id}: {message_content}")
+
+        # At this point, we have either special instructions saved or we're ready to proceed
+        # Check if order needs to be moved to pending status and order summary shown
+        if awaiting_order.status == 'awaiting':
+            awaiting_order.status = 'pending'
+            awaiting_order.save()
+            logger.info(f"Moved order {awaiting_order.id} to pending status")
+
+        # Calculate and show order summary before payment
+        if awaiting_order.delivery_address:
+            return self._calculate_and_show_order_summary(awaiting_order, user, context, message)
+        else:
+            # No delivery address yet, ask for it
+            return {
+                'action': 'address_required',
+                'message': f"📍 *Almost ready!* Before we proceed to payment, I need your delivery address.\n\n"
+                          f"🏠 Please provide your full delivery address:\n\n"
+                          f"💡 Example: '123 Lagos Street, Ikeja, Lagos' or 'Victoria Island, Lagos'\n\n"
+                          f"🔍 I'll calculate exact delivery fees based on your location!"
+            }
+
+    except Exception as e:
+        logger.error(f"Error handling special instructions: {str(e)}")
+        return None
 
     def _handle_specific_vendor_request(self, message_content: str, user, context: Dict) -> Optional[Dict]:
         """
@@ -1693,9 +2345,9 @@ class WhatsAppAIService:
         """
         # This is a placeholder for WhatsApp Business API integration
         # In a real implementation, you would integrate with WhatsApp Business API
-        
+
         logger.info(f"Sending WhatsApp message to {phone_number}: {message}")
-        
+
         # For now, return success status
         return {
             'success': True,

@@ -54,29 +54,40 @@ class VendorOrderNotificationService:
         Build the new order notification message for vendor.
         """
         customer_name = order.customer.get_full_name() if order.customer else "Customer"
-        delivery_address = order.shipping_address or "Pickup"
+        delivery_address = order.delivery_address or order.shipping_address or "Pickup"
 
         # Get order items summary
         items_summary = VendorOrderNotificationService._get_order_items_summary(order)
 
         message = f"""🍽️ *NEW ORDER RECEIVED* - Bestyy
 
-Order #{order.id}
-Customer: {customer_name}
-Delivery: {delivery_address}
+📦 Order #*{order.order_number}*
+👤 Customer: {customer_name}
+📍 Delivery: {delivery_address}
 
-📦 *Order Items:*
+*Order Items:*
 {items_summary}
 
 💰 *Payment Details:*
-Total Amount: ₦{order.total_amount}
-Payment Status: ✅ Confirmed
-Reference: {order.payment_id or 'N/A'}
+Total: ₦{order.total_amount:,.0f}
+Status: ✅ Paid & Confirmed
+Pickup Code: *{order.pickup_code or 'Pending'}*
 
-⏰ *Please prepare the order promptly!*
-Customer expects delivery within 30-45 minutes.
+━━━━━━━━━━━━━━━━━━━
+⚡ *PLEASE RESPOND:*
 
-Reply with 'help' for assistance."""
+✅ Reply *ACCEPT* to start preparing
+❌ Reply *REJECT* if you can't fulfill
+
+Once accepted:
+1️⃣ Prepare the order
+2️⃣ Reply *READY* when food is ready
+3️⃣ Courier will be notified automatically
+4️⃣ Give pickup code to courier
+
+⏰ Expected prep time: 30-45 minutes
+
+Reply 'ACCEPT' or 'REJECT' now."""
 
         return message
 

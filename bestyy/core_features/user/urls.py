@@ -9,12 +9,14 @@ from .api import (
     courier_deliveries, courier_dashboard_views, admin_views, admin_order_views,
     admin_user_management, banner_views, unified_recommendation_view,
     unified_search_view, smart_recommendations, vendor_menu_views, vendor_transactions,
-    vendor_profile_views, location_services, order_summary, google_places_proxy
+    vendor_profile_views, location_services, order_summary, google_places_proxy,
+    paystack_pwt_views, test_payment_views, website_cart_views, vendor_autocomplete_views
 )
 from .api.user_subscription_views import (
-    paystack_webhook, verify_subscription_payment, user_subscription_status,
+    verify_subscription_payment, user_subscription_status,
     initialize_subscription_payment, subscription_success_page
 )
+from .api.paystack_webhooks import paystack_webhook
 from .api import verification_views
 
 app_name = 'user'
@@ -22,6 +24,7 @@ app_name = 'user'
 urlpatterns = [
     # Authentication
     path('login/', user_views.UserLoginView.as_view(), name='user_login'),
+    path('login/select-profile/', user_views.SelectProfileView.as_view(), name='select_profile'),
     
     # User management
     path('me/', user_views.UserProfileView.as_view(), name='user_me'),
@@ -44,17 +47,31 @@ urlpatterns = [
     path('orders/<uuid:pk>/receipt/', order_views.OrderReceiptView.as_view(), name='order_receipt'),
     path('orders/<uuid:pk>/payment-status/', order_views.OrderPaymentStatusView.as_view(), name='order_payment_status'),
     path('orders/<uuid:pk>/modify/', order_views.OrderSummaryView.as_view(), name='order_modify'),
+    path('orders/<uuid:pk>/tracking/', order_views.OrderTrackingView.as_view(), name='order_tracking'),
 
-    # Cart management
+    # Cart management (OLD - session-based, for WhatsApp ordering)
     path('cart/', food_customization_views.CartView.as_view(), name='cart'),
     path('cart/add/', food_customization_views.AddToCartView.as_view(), name='cart_add'),
+    
+    # Website Cart (NEW - JWT-based, works across all browsers without cookies)
+    path('website-cart/', website_cart_views.cart_list_view, name='website_cart_list'),
+    path('website-cart/add/', website_cart_views.cart_add_view, name='website_cart_add'),
+    path('website-cart/update/', website_cart_views.cart_update_view, name='website_cart_update'),
+    path('website-cart/remove/', website_cart_views.cart_remove_view, name='website_cart_remove'),
+    path('website-cart/clear/', website_cart_views.cart_clear_view, name='website_cart_clear'),
+    path('website-cart/summary/', website_cart_views.cart_summary_view, name='website_cart_summary'),
+    path('website-cart/merge/', website_cart_views.cart_merge_view, name='website_cart_merge'),
 
     # Vendor search and recommendations
     path('vendors/search/', vendor_search_views.VendorSearchView.as_view(), name='vendor_search'),
+    path('vendors/autocomplete/', vendor_autocomplete_views.vendor_autocomplete, name='vendor_autocomplete'),
+    path('vendors/suggestions/', vendor_autocomplete_views.vendor_suggestions, name='vendor_suggestions'),
+    path('vendors/by-cuisine/', vendor_autocomplete_views.vendor_by_cuisine, name='vendor_by_cuisine'),
     path('vendors/<int:vendor_id>/profile/', vendor_profile_views.VendorProfileDetailView.as_view(), name='vendor_profile'),
     path('vendors/<int:vendor_id>/menu/', vendor_menu_views.VendorMenuItemsView.as_view(), name='vendor_menu'),
     # path('vendors/featured/', vendor_search_views.FeaturedVendorsView.as_view(), name='featured_vendors'),
     path('recommendations/', unified_recommendation_view.UnifiedVendorRecommendationView.as_view(), name='vendor_recommendations'),
+    path('vendors/recommendations/', unified_recommendation_view.UnifiedVendorRecommendationView.as_view(), name='vendors_recommendations'),
 
     # Smart recommendations (NEW)
     path('smart-recommendations/', smart_recommendations.SmartItemRecommendationsView.as_view(), name='smart_recommendations'),
@@ -85,10 +102,12 @@ urlpatterns = [
     path('vendors/dashboard/order-activity/', vendor_transactions.vendor_order_activity, name='vendor_order_activity'),
 
     # Payment - using function-based views that exist
-    path('payments/paystack/webhook/', paystack_views.create_dedicated_account, name='paystack_webhook'),
-    path('payments/paystack/initialize/', paystack_views.get_dedicated_account, name='paystack_initialize'),
-    path('payments/paystack/verify/<str:reference>/', paystack_views.requery_account, name='paystack_verify'),
     path('payments/crypto/', crypto_payment_views.CryptoPaymentListView.as_view(), name='crypto_payment'),
+    path('payments/paystack/initialize/', paystack_pwt_views.PaystackPwTInitializeView.as_view(), name='paystack_pwt_initialize'),
+    
+    # TEST ENDPOINTS - Only work in DEBUG mode
+    path('payments/test/verify/', test_payment_views.TestPaymentVerificationView.as_view(), name='test_payment_verify'),
+    path('payments/test/pending/', test_payment_views.TestListPendingOrdersView.as_view(), name='test_pending_orders'),
 
     # Food customization
     path('food-customization/', food_customization_views.MenuItemCustomizationView.as_view(), name='food_customization'),

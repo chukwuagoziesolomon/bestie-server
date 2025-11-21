@@ -84,7 +84,7 @@ class OrderModificationService:
             return False, "Order item not found."
 
         # Check if this would leave order empty
-        remaining_items = OrderItem.objects.filter(cart__user=order.user).exclude(id=order_item_id).count()
+        remaining_items = OrderItem.objects.filter(cart__user=order.customer).exclude(id=order_item_id).count()
         if remaining_items == 0:
             return False, "Cannot remove the last item from order. Cancel the order instead."
 

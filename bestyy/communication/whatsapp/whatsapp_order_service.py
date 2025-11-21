@@ -201,6 +201,8 @@ class WhatsAppOrderService:
                 menu_item = MenuItem.objects.get(id=item_data['menu_item_id'])
                 quantity = item_data.get('quantity', 1)
 
+                logger.info(f"Processing menu item {menu_item.id}: {menu_item.name}, price: {menu_item.price}, quantity: {quantity}")
+
                 # Create OrderItem without cart reference
                 # cart_item = OrderItem.objects.create(
                 #     cart=cart,
@@ -208,10 +210,12 @@ class WhatsAppOrderService:
                 #     quantity=quantity,
                 #     price=menu_item.price
                 # )
-                
+
                 item_total = menu_item.price * quantity
                 total_price += item_total
-                
+
+                logger.info(f"Item total: {item_total}, running total: {total_price}")
+
                 order_items_data.append({
                     'name': menu_item.name,
                     'quantity': quantity,
@@ -219,15 +223,30 @@ class WhatsAppOrderService:
                     'total': float(item_total)
                 })
             
+            # Ensure minimum order amount
+            logger.info(f"Calculated total_price: {total_price}")
+            if total_price <= 0:
+                logger.warning(f"Order total is {total_price}, setting minimum amount to ₦2500")
+                total_price = Decimal('2500.00')  # Minimum order amount
+            else:
+                logger.info(f"Order total is {total_price}, using calculated amount")
+
+            # Ensure minimum order amount
+            if total_price <= 0:
+                logger.warning(f"Order total is {total_price}, setting minimum amount of 2500")
+                total_price = Decimal('2500.00')  # Minimum order amount
+
             # Create order in awaiting state
             order = Order.objects.create(
-                user=user,
+                customer=user,
                 vendor=vendor,
                 delivery_address="To be provided",  # Placeholder
-                total_price=total_price,
+                total_amount=total_price,
                 status='awaiting',  # Set to awaiting state
-                order_placed_at=timezone.now()
+                created_at=timezone.now()
             )
+
+            logger.info(f"Created order {order.id} with total_amount: {total_price}")
             
             # Add menu items to order (after order is saved)
             menu_items_to_add = []
@@ -295,6 +314,29 @@ class WhatsAppOrderService:
             total_price = Decimal('0.00')
             order_items_data = []
             
+            # Validate stock availability first
+            from bestyy.core_features.user.cart_utils import get_available_stock
+            
+            stock_errors = []
+            for item_data in items_data:
+                menu_item = MenuItem.objects.get(id=item_data['menu_item_id'])
+                quantity = item_data.get('quantity', 1)
+                available = get_available_stock(menu_item)
+                
+                if available < quantity:
+                    stock_errors.append({
+                        'product': menu_item.name,
+                        'requested': quantity,
+                        'available': available
+                    })
+            
+            if stock_errors:
+                error_msg = "Insufficient stock for: " + ", ".join(
+                    [f"{e['product']} (requested: {e['requested']}, available: {e['available']})" 
+                     for e in stock_errors]
+                )
+                return {'success': False, 'error': error_msg}
+            
             # Add items to cart
             for item_data in items_data:
                 menu_item = MenuItem.objects.get(id=item_data['menu_item_id'])
@@ -318,6 +360,7 @@ class WhatsAppOrderService:
                 })
             
             # Create order
+            # Note: Stock reservations will be created automatically when payment_confirmed=True (via signal)
             order = Order.objects.create(
                 user=user,
                 vendor=vendor,
@@ -345,26 +388,38 @@ class WhatsAppOrderService:
             # Generate dedicated bank account for payment
             bank_account = None
             if payment_method == 'bank_transfer':
-                account_result = self.paystack_service.create_dedicated_account(user)
+                # Use Pay with Transfer
+                amount_kobo = int((order.total_amount or 0) * 100)  # Convert to kobo for Paystack
+                account_result = self.paystack_service.initialize_pay_with_transfer(
+                    email=user.email,
+                    amount=amount_kobo,
+                    reference=f"order_{order.id}",
+                    expiry_hours=8
+                )
                 if account_result.get('success'):
-                    bank_account = account_result.get('account')
-                    # Store account details in order metadata for webhook processing
-                    order.payment_reference = account_result.get('account', {}).get('account_number', f"ORDER-{order.id}")
+                    bank_account = account_result.get('account_details', {})
+                    # Store reference for webhook processing
+                    order.payment_reference = bank_account.get('reference') if bank_account else f"order_{order.id}"
                     order.save()
             
+            # Safe conversions to handle None values
+            delivery_fee = order.delivery_fee or 0
+            total_amount = (total_with_delivery or 0) if total_with_delivery else total_price
+            distance_km = order.delivery_distance_km or 0
+
             return {
                 'success': True,
                 'order': {
                     'id': order.id,
                     'order_number': f"#{order.id}",
-                    'vendor': vendor.business_name,
+                    'vendor': vendor.business_name if vendor else 'Unknown Vendor',
                     'items': order_items_data,
                     'food_amount': float(total_price),
-                    'delivery_fee': float(order.delivery_fee),
-                    'total_amount': float(total_with_delivery),
+                    'delivery_fee': float(delivery_fee),
+                    'total_amount': float(total_amount),
                     'currency': 'NGN',
                     'delivery_address': address.street_address,
-                    'distance_km': order.distance_km,
+                    'distance_km': float(distance_km),
                     'status': order.status,
                     'payment_method': payment_method,
                     'bank_account': bank_account,
@@ -379,14 +434,14 @@ class WhatsAppOrderService:
     def get_order_status(self, order_id, user):
         """Get current order status"""
         try:
-            order = Order.objects.get(id=order_id, user=user)
+            order = Order.objects.get(id=order_id, customer=user)
             return {
                 'success': True,
                 'order': {
                     'id': order.id,
                     'status': order.status,
-                    'vendor': order.vendor.business_name,
-                    'total_amount': float(order.total_price),
+                    'vendor': order.vendor.business_name if order.vendor else 'Unknown Vendor',
+                    'total_amount': float(order.total_amount or 0),
                     'estimated_delivery': '30-45 minutes'
                 }
             }
@@ -395,4 +450,3 @@ class WhatsAppOrderService:
         except Exception as e:
             logger.error(f"Error getting order status: {str(e)}")
             return {'success': False, 'error': str(e)}
-

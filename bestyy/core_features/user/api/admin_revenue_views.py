@@ -258,7 +258,7 @@ class AdminRevenueAnalyticsView(APIView):
         current_orders = Order.objects.filter(
             created_at__gte=date_range['start'],
             created_at__lte=date_range['end'],
-            payment_status=True
+            payment_confirmed=True
         )
         
         total_revenue = current_orders.aggregate(total=Sum('total_amount'))['total'] or 0
@@ -273,7 +273,7 @@ class AdminRevenueAnalyticsView(APIView):
         previous_orders = Order.objects.filter(
             created_at__gte=prev_start,
             created_at__lt=prev_end,
-            payment_status=True
+            payment_confirmed=True
         )
         
         previous_revenue = previous_orders.aggregate(total=Sum('total_amount'))['total'] or 0
@@ -309,7 +309,7 @@ class AdminRevenueAnalyticsView(APIView):
         for status_choice in OrderStatus.choices:
             status_value = status_choice[0]
             status_orders = orders.filter(status=status_value)
-            status_revenue = status_orders.aggregate(total=Sum('total_price'))['total'] or 0
+            status_revenue = status_orders.aggregate(total=Sum('total_amount'))['total'] or 0
             status_breakdown[status_value] = float(status_revenue)
 
         # Payment method breakdown - simplified since we don't have Payment model
@@ -323,7 +323,7 @@ class AdminRevenueAnalyticsView(APIView):
             'vendor__id',
             'vendor__business_name'
         ).annotate(
-            revenue=Sum('total_price'),
+            revenue=Sum('total_amount'),
             orders=Count('id')
         ).order_by('-revenue')[:10]
         

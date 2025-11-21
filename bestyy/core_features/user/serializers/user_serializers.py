@@ -248,30 +248,63 @@ class UserLoginSerializer(serializers.Serializer):
     def validate(self, attrs):
         email = attrs.get('email')
         password = attrs.get('password')
-        try:
-            user = User.objects.get(email__iexact=email)
-        except User.DoesNotExist:
+        
+        # Find all users with this email (can have multiple roles)
+        users = User.objects.filter(email__iexact=email)
+        
+        if not users.exists():
             raise AuthenticationFailed('Invalid email or password')
-
-        if not user.check_password(password):
+        
+        # Validate password and collect valid profiles
+        valid_profiles = []
+        for user in users:
+            if user.check_password(password) and user.is_active:
+                profile_data = {
+                    'id': user.id,
+                    'email': user.email,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'role': user.role,
+                    'phone': user.phone,
+                }
+                
+                # Add role-specific profile info
+                if user.role == 'vendor' and hasattr(user, 'vendor_profile'):
+                    profile_data['vendor_info'] = {
+                        'id': user.vendor_profile.id,
+                        'business_name': user.vendor_profile.business_name,
+                        'is_verified': user.vendor_profile.is_verified,
+                        'business_category': user.vendor_profile.business_category,
+                    }
+                elif user.role == 'courier' and hasattr(user, 'courier_profile'):
+                    profile_data['courier_info'] = {
+                        'id': user.courier_profile.id,
+                        'is_verified': user.courier_profile.is_verified,
+                        'is_available': user.courier_profile.is_available,
+                        'vehicle_type': user.courier_profile.vehicle_type,
+                    }
+                
+                valid_profiles.append(profile_data)
+        
+        if not valid_profiles:
             raise AuthenticationFailed('Invalid email or password')
-
-        if not user.is_active:
-            raise AuthenticationFailed('User account is disabled')
-
-        refresh = RefreshToken.for_user(user)
-        return {
-            'refresh': str(refresh),
-            'access': str(refresh.access_token),
-            'user': {
-                'id': user.id,
-                'email': user.email,
-                'first_name': user.first_name,
-                'last_name': user.last_name,
-                'role': user.role,  # Primary role for backward compatibility
-                'roles': [],  # Since UserRole model was deleted, return empty list for now
-                'phone': user.profile.phone if hasattr(user, 'profile') else None,  # Include phone number from profile
+        
+        # If only one profile, return tokens immediately
+        if len(valid_profiles) == 1:
+            user = User.objects.get(id=valid_profiles[0]['id'])
+            refresh = RefreshToken.for_user(user)
+            return {
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+                'user': valid_profiles[0],
+                'multiple_profiles': False
             }
+        
+        # Multiple profiles found - return all for selection
+        return {
+            'multiple_profiles': True,
+            'profiles': valid_profiles,
+            'message': 'Multiple profiles found. Please select one to continue.'
         }
 
 
@@ -486,17 +519,23 @@ class MultiRoleRegistrationSerializer(serializers.Serializer):
         first_name = validated_data.get('first_name') or (email.split('@')[0].split('.')[0].title() if email else 'WhatsApp')
         last_name = validated_data.get('last_name') or 'User'
 
-        # Check if user already exists
-        if User.objects.filter(email=email).exists():
+        # Check if user with same email and role already exists
+        existing_roles = User.objects.filter(email=email).values_list('role', flat=True)
+        duplicate_roles = set(roles) & set(existing_roles)
+        if duplicate_roles:
             raise serializers.ValidationError({
-                'email': 'A user with this email already exists.'
+                'roles': f'You already have an account for role(s): {", ".join(duplicate_roles)}. Please login instead.'
             })
 
-        # Check if pending user already exists
-        if PendingUser.objects.filter(email=email, is_verified=False).exists():
-            raise serializers.ValidationError({
-                'email': 'A registration is already pending for this email. Please check your WhatsApp for verification code.'
-            })
+        # Check if pending user exists for THE SAME ROLES
+        pending_users = PendingUser.objects.filter(email=email, is_verified=False)
+        for pending in pending_users:
+            pending_roles = pending.profile_data.get('roles', [pending.user_type])
+            duplicate_pending_roles = set(roles) & set(pending_roles)
+            if duplicate_pending_roles:
+                raise serializers.ValidationError({
+                    'roles': f'A registration is already pending for role(s): {", ".join(duplicate_pending_roles)}. Please check your WhatsApp for verification code.'
+                })
 
         # Generate verification code
         verification_code = str(secrets.randbelow(900000) + 100000)

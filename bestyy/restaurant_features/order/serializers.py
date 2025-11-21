@@ -42,12 +42,14 @@ class OrderItemAdminSerializer(serializers.ModelSerializer):
 class OrderAdminListSerializer(serializers.ModelSerializer):
     """Serializer for listing orders in admin view."""
     customer_name = serializers.SerializerMethodField()
-    customer_email = serializers.EmailField(source='customer.email')
+    customer_email = serializers.SerializerMethodField()
     vendor_name = serializers.CharField(source='vendor.business_name')
     vendor_id = serializers.UUIDField(source='vendor.id')
     items_count = serializers.SerializerMethodField()
     delivery_address = serializers.SerializerMethodField()
     order_date = serializers.DateTimeField(source='created_at')
+    pickup_code = serializers.CharField(read_only=True)
+    delivery_otp = serializers.CharField(read_only=True)
     
     class Meta:
         model = Order
@@ -66,6 +68,8 @@ class OrderAdminListSerializer(serializers.ModelSerializer):
             'payment_status',
             'payment_method',
             'created_at',
+            'pickup_code',
+            'delivery_otp',
         ]
         read_only_fields = fields
     
@@ -73,6 +77,12 @@ class OrderAdminListSerializer(serializers.ModelSerializer):
         """Return full name of the customer."""
         if obj.customer:
             return f"{obj.customer.first_name} {obj.customer.last_name}"
+        return ""
+    
+    def get_customer_email(self, obj):
+        """Return customer email, handling None customer."""
+        if obj.customer:
+            return obj.customer.email
         return ""
     
     def get_items_count(self, obj):

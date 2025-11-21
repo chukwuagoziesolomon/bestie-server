@@ -155,13 +155,13 @@ class AdminDashboardStatsView(APIView):
             created_at__gte=date_ranges['current']['start'],
             created_at__lte=date_ranges['current']['end'],
             payment_confirmed=True
-        ).aggregate(total=Sum('total_price'))['total'] or Decimal('0.00')
+        ).aggregate(total=Sum('total_amount'))['total'] or Decimal('0.00')
 
         previous_revenue = Order.objects.filter(
             created_at__gte=date_ranges['previous']['start'],
             created_at__lte=date_ranges['previous']['end'],
             payment_confirmed=True
-        ).aggregate(total=Sum('total_price'))['total'] or Decimal('0.00')
+        ).aggregate(total=Sum('total_amount'))['total'] or Decimal('0.00')
 
         change = self._calculate_change(float(current_revenue), float(previous_revenue))
 
@@ -298,10 +298,14 @@ class AdminRevenueBreakdownView(APIView):
                     continue
 
                 category = order.vendor.business_category
+                # Handle empty or None categories
+                if not category or category.strip() == '':
+                    category = 'Uncategorized'
+                
                 if category not in category_totals:
                     category_totals[category] = Decimal('0.00')
-                category_totals[category] += order.total_price
-                total_revenue += order.total_price
+                category_totals[category] += order.total_amount
+                total_revenue += order.total_amount
             
             # Calculate percentages and format response
             categories = []
@@ -356,9 +360,224 @@ class AdminRevenueBreakdownView(APIView):
         """Define colors for different business categories."""
         return {
             "Restaurant": "#FF6B6B",
+            "Nigerian Restaurant": "#10B981",
+            "Continental": "#8B5CF6",
+            "Street Food": "#F59E0B",
             "Grocery": "#4ECDC4",
             "Fast Food": "#45B7D1",
             "Cafe": "#96CEB4",
             "Bakery": "#FFEEAD",
+            "Uncategorized": "#9CA3AF",
             "Other": "#808080"
+        }
+
+
+class AdminOrderActivityView(APIView):
+    """
+    API endpoint that provides recent order activity data for admin dashboard.
+    
+    ## Permissions
+    - User must be authenticated
+    - User must be a superuser (is_superuser=True)
+    
+    ## Query Parameters
+    - `period` (string, optional): Time period for data range.
+      Options: 'today', 'week', 'month'. Default: 'week'
+    - `limit` (integer, optional): Maximum number of orders to return. Default: 10
+    
+    ## Response Format
+    ```json
+    {
+        "orders": [
+            {
+                "id": 1,
+                "order_number": "ORD-12345",
+                "customer_name": "John Doe",
+                "vendor_name": "Best Restaurant",
+                "total_amount": 5000.00,
+                "status": "completed",
+                "created_at": "2025-11-20T10:30:00Z"
+            }
+        ],
+        "total_count": 150,
+        "period": "week"
+    }
+    ```
+    """
+    permission_classes = [permissions.IsAuthenticated, IsAdminUser]
+    
+    def get(self, request):
+        try:
+            period = request.query_params.get('period', 'week')
+            limit = int(request.query_params.get('limit', 10))
+            
+            # Calculate date range
+            date_range = self._get_date_range(period)
+            
+            # Get recent orders
+            orders = Order.objects.filter(
+                created_at__gte=date_range['start'],
+                created_at__lte=date_range['end']
+            ).select_related('customer', 'vendor').order_by('-created_at')[:limit]
+            
+            # Format order data
+            order_data = []
+            for order in orders:
+                order_data.append({
+                    'id': order.id,
+                    'order_number': order.order_number,
+                    'customer_name': f"{order.customer.first_name} {order.customer.last_name}" if order.customer else "Guest",
+                    'vendor_name': order.vendor.business_name if order.vendor else "N/A",
+                    'total_amount': float(order.total_amount),
+                    'formatted_amount': f"N{float(order.total_amount):,.2f}",
+                    'status': order.status,
+                    'created_at': order.created_at.isoformat()
+                })
+            
+            # Get total count
+            total_count = Order.objects.filter(
+                created_at__gte=date_range['start'],
+                created_at__lte=date_range['end']
+            ).count()
+            
+            response_data = {
+                'orders': order_data,
+                'total_count': total_count,
+                'period': period
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Error in AdminOrderActivityView: {str(e)}")
+            return Response(
+                {'error': 'Failed to fetch order activity'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _get_date_range(self, period):
+        """Helper method to calculate date range based on period."""
+        now = timezone.now()
+        if period == 'today':
+            start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        elif period == 'week':
+            start_date = now - timedelta(days=7)
+        else:  # month
+            start_date = now - timedelta(days=30)
+        
+        return {
+            'start': start_date,
+            'end': now
+        }
+
+
+class AdminTopVendorsView(APIView):
+    """
+    API endpoint that provides top performing vendors data for admin dashboard.
+    
+    ## Permissions
+    - User must be authenticated
+    - User must be a superuser (is_superuser=True)
+    
+    ## Query Parameters
+    - `period` (string, optional): Time period for data range.
+      Options: 'today', 'week', 'month', 'year'. Default: 'week'
+    - `limit` (integer, optional): Maximum number of vendors to return. Default: 10
+    
+    ## Response Format
+    ```json
+    {
+        "vendors": [
+            {
+                "id": 1,
+                "business_name": "Best Restaurant",
+                "total_revenue": 150000.00,
+                "order_count": 45,
+                "average_order_value": 3333.33,
+                "percentage_of_total": 25.5
+            }
+        ],
+        "total_revenue": 590000.00,
+        "period": "week"
+    }
+    ```
+    """
+    permission_classes = [permissions.IsAuthenticated, IsAdminUser]
+    
+    def get(self, request):
+        try:
+            period = request.query_params.get('period', 'week')
+            limit = int(request.query_params.get('limit', 10))
+            
+            # Calculate date range
+            date_range = self._get_date_range(period)
+            
+            # Get vendor performance data
+            vendor_stats = Order.objects.filter(
+                created_at__gte=date_range['start'],
+                created_at__lte=date_range['end'],
+                payment_confirmed=True
+            ).values(
+                'vendor__id',
+                'vendor__business_name'
+            ).annotate(
+                total_revenue=Sum('total_amount'),
+                order_count=Count('id'),
+                average_order_value=Avg('total_amount')
+            ).order_by('-total_revenue')[:limit]
+            
+            # Calculate total revenue for percentage
+            total_revenue = Order.objects.filter(
+                created_at__gte=date_range['start'],
+                created_at__lte=date_range['end'],
+                payment_confirmed=True
+            ).aggregate(total=Sum('total_amount'))['total'] or Decimal('0.00')
+            
+            # Format vendor data
+            vendors = []
+            for vendor in vendor_stats:
+                revenue = vendor['total_revenue'] or Decimal('0.00')
+                percentage = round((revenue / total_revenue * 100) if total_revenue > 0 else 0, 1)
+                
+                vendors.append({
+                    'id': vendor['vendor__id'],
+                    'business_name': vendor['vendor__business_name'],
+                    'total_revenue': float(revenue),
+                    'formatted_revenue': f"N{float(revenue):,.2f}",
+                    'order_count': vendor['order_count'],
+                    'average_order_value': float(vendor['average_order_value'] or 0),
+                    'percentage_of_total': percentage
+                })
+            
+            response_data = {
+                'vendors': vendors,
+                'total_revenue': float(total_revenue),
+                'formatted_total_revenue': f"N{float(total_revenue):,.2f}",
+                'period': period
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Error in AdminTopVendorsView: {str(e)}")
+            return Response(
+                {'error': 'Failed to fetch top vendors'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _get_date_range(self, period):
+        """Helper method to calculate date range based on period."""
+        now = timezone.now()
+        if period == 'today':
+            start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        elif period == 'week':
+            start_date = now - timedelta(days=7)
+        elif period == 'year':
+            start_date = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        else:  # month
+            start_date = now - timedelta(days=30)
+        
+        return {
+            'start': start_date,
+            'end': now
         }

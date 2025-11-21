@@ -50,6 +50,7 @@ class UserRegistrationView(CreateAPIView):
 class UserLoginView(APIView):
     """
     API endpoint for user login.
+    Returns multiple profiles if user has registered for multiple roles.
     """
     permission_classes = [permissions.AllowAny]
     
@@ -58,6 +59,78 @@ class UserLoginView(APIView):
         if serializer.is_valid():
             return Response(serializer.validated_data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SelectProfileView(APIView):
+    """
+    API endpoint to select a specific profile when user has multiple roles.
+    """
+    permission_classes = [permissions.AllowAny]
+    
+    def post(self, request):
+        email = request.data.get('email')
+        password = request.data.get('password')
+        profile_id = request.data.get('profile_id')
+        
+        if not all([email, password, profile_id]):
+            return Response({
+                'error': 'Email, password, and profile_id are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Get the specific user profile
+            user = User.objects.get(id=profile_id, email__iexact=email)
+            
+            # Verify password
+            if not user.check_password(password):
+                return Response({
+                    'error': 'Invalid credentials'
+                }, status=status.HTTP_401_UNAUTHORIZED)
+            
+            if not user.is_active:
+                return Response({
+                    'error': 'User account is disabled'
+                }, status=status.HTTP_401_UNAUTHORIZED)
+            
+            # Generate tokens for selected profile
+            from rest_framework_simplejwt.tokens import RefreshToken
+            refresh = RefreshToken.for_user(user)
+            
+            profile_data = {
+                'id': user.id,
+                'email': user.email,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
+                'role': user.role,
+                'phone': user.profile.phone if hasattr(user, 'profile') else user.phone,
+            }
+            
+            # Add role-specific info
+            if user.role == 'vendor' and hasattr(user, 'vendor_profile'):
+                profile_data['vendor_info'] = {
+                    'business_name': user.vendor_profile.business_name,
+                    'is_verified': user.vendor_profile.is_verified,
+                }
+            elif user.role == 'courier' and hasattr(user, 'courier_profile'):
+                profile_data['courier_info'] = {
+                    'is_verified': user.courier_profile.is_verified,
+                    'is_available': user.courier_profile.is_available,
+                }
+            
+            return Response({
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+                'user': profile_data
+            }, status=status.HTTP_200_OK)
+            
+        except User.DoesNotExist:
+            return Response({
+                'error': 'Profile not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
 
 
 class UserProfileView(RetrieveUpdateAPIView):
@@ -354,7 +427,7 @@ class UserOrdersView(ListAPIView):
     pagination_class = StandardResultsSetPagination
     
     def get_queryset(self):
-        queryset = Order.objects.filter(user=self.request.user).order_by('-created_at')
+        queryset = Order.objects.filter(customer=self.request.user).order_by('-created_at')
         
         # Filter by status if provided
         status_filter = self.request.query_params.get('status', None)
@@ -388,12 +461,12 @@ class UserOrderDetailView(RetrieveAPIView):
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
-        return Order.objects.filter(user=self.request.user)
+        return Order.objects.filter(customer=self.request.user)
     
     def get_object(self):
         order_id = self.kwargs.get('order_id')
         return get_object_or_404(
-            Order.objects.filter(user=self.request.user),
+            Order.objects.filter(customer=self.request.user),
             id=order_id
         )
 
@@ -634,6 +707,7 @@ class MultiRoleRegistrationView(APIView):
     def _handle_user_only_registration(self, validated_data):
         """
         Handle registration for users with only 'user' role - skip WhatsApp verification.
+        Allows same email for different roles.
         """
         email = validated_data['email']
         password = validated_data['password']
@@ -642,11 +716,24 @@ class MultiRoleRegistrationView(APIView):
         last_name = validated_data.get('last_name') or 'User'
 
         try:
-            # Check if user already exists
-            if User.objects.filter(email=email).exists():
+            # Check if user role already exists with this email AND role
+            existing_user_role = User.objects.filter(email=email, role='user').first()
+            if existing_user_role:
                 return Response({
-                    'error': 'A user with this email already exists.'
+                    'error': 'You already have a user account with this email. Please login to access it.'
                 }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # If user has other roles (vendor/courier) with same email, get password from existing account
+            existing_user = User.objects.filter(email=email).first()
+            if existing_user:
+                # Verify password matches existing account
+                if not existing_user.check_password(password):
+                    return Response({
+                        'error': 'Password does not match your existing account. Please use the same password.'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                # Use same name from existing account
+                first_name = existing_user.first_name
+                last_name = existing_user.last_name
 
             # Create the user directly (no pending verification needed)
             user = User.objects.create_user(
@@ -705,6 +792,7 @@ class MultiRoleRegistrationView(APIView):
         """
         Handle simple user registration without WhatsApp verification.
         Only requires email, password, and confirm_password.
+        Allows same email for different roles.
         """
         data = request.data
 
@@ -721,11 +809,23 @@ class MultiRoleRegistrationView(APIView):
             }, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            # Check if user already exists
-            if User.objects.filter(email=data['email']).exists():
+            # Check if user role already exists with this email AND role
+            existing_user_role = User.objects.filter(email=data['email'], role='user').first()
+            if existing_user_role:
                 return Response({
-                    'error': 'A user with this email already exists.'
+                    'error': 'You already have a user account with this email. Please login to access it.'
                 }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # If user has other roles (vendor/courier) with same email, verify password matches
+            existing_user = User.objects.filter(email=data['email']).first()
+            if existing_user:
+                if not existing_user.check_password(data['password']):
+                    return Response({
+                        'error': 'Password does not match your existing account. Please use the same password.'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                # Use same name from existing account
+                data['first_name'] = existing_user.first_name
+                data['last_name'] = existing_user.last_name
 
             # Create the user directly (no pending verification needed)
             user = User.objects.create_user(

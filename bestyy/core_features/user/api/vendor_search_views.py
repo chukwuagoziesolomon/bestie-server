@@ -107,6 +107,9 @@ class VendorSearchView(APIView):
             }, status=status.HTTP_200_OK)
             
         except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error in VendorSearchView.get: {str(e)}", exc_info=True)
             return Response({
                 'success': False,
                 'error': str(e)
@@ -141,7 +144,7 @@ class VendorSearchView(APIView):
             # No rating system implemented yet
             avg_rating=Avg('id'),  # Placeholder
             total_reviews=Count('id'),  # Placeholder
-            menu_item_count=Count('menu_items')
+            menu_item_count=Count('products')
         )
         
         # Apply text search
@@ -173,30 +176,31 @@ class VendorSearchView(APIView):
                 Q(business_description__icontains=cuisine)
             )
         
-        # Apply price range filter (based on menu items)
+        # Apply price range filter (based on products)
         if min_price or max_price:
             price_filter = Q()
             if min_price:
                 try:
                     min_price_float = float(min_price)
-                    price_filter |= Q(menu_items__price__gte=min_price_float)
+                    price_filter |= Q(products__price__gte=min_price_float)
                 except ValueError:
                     pass
             if max_price:
                 try:
                     max_price_float = float(max_price)
-                    price_filter |= Q(menu_items__price__lte=max_price_float)
+                    price_filter |= Q(products__price__lte=max_price_float)
                 except ValueError:
                     pass
-            
+
             if price_filter:
                 queryset = queryset.filter(price_filter).distinct()
         
-        # Apply rating filter
+        # Apply rating filter (placeholder - no rating system implemented yet)
         if min_rating:
             try:
                 min_rating_float = float(min_rating)
-                queryset = queryset.filter(ratings__rating__gte=min_rating_float).distinct()
+                # Placeholder filter - no rating model exists yet
+                # queryset = queryset.filter(ratings__rating__gte=min_rating_float).distinct()
             except ValueError:
                 pass
         
@@ -235,58 +239,22 @@ class VendorSearchView(APIView):
             'vendors': vendor_data
         }
     
-    def _calculate_search_score(self, query: str, user: Optional[User]) -> DecimalField:
-        """Calculate search relevance score with rating penalties"""
-        # Rating score with boost for new vendors and penalties for low ratings
-        score = Case(
-            When(Q(avg_rating__isnull=True) | Q(total_reviews=0), then=5),  # Boost for new/unrated vendors
-            When(avg_rating__gte=4.0, then=F('avg_rating') * 15),  # Excellent ratings
-            When(avg_rating__gte=3.0, then=F('avg_rating') * 10),  # Good ratings
-            When(avg_rating__gte=2.0, then=F('avg_rating') * 5),   # Average ratings
-            default=F('avg_rating') * -10,  # Penalty for poor ratings (< 2.0)
-            output_field=DecimalField()
-        )
-        
-        # No popularity model - skip popularity score
-        
-        # Boost for featured vendors (pro subscription)
-        score += Case(
-            When(subscription__status__in=['active', 'non-renewing'], subscription__plan__plan_type='pro', then=50),
-            default=0,
-            output_field=DecimalField()
-        )
-        
-        # Boost for vendors with more menu items
-        score = score + Case(
-            When(menu_item_count__gt=0, then=F('menu_item_count') * 0.5),
-            default=0,
-            output_field=DecimalField()
-        )
-        
+    def _calculate_search_score(self, query: str, user: Optional[User]):
+        """Calculate search relevance score (simplified for launch)"""
+        # Simplified score based on menu items and delivery options
+        score_expr = F('menu_item_count') * 2  # 2 points per menu item
+
         # Boost for delivery options
-        score = score + Case(
+        score_expr += Case(
             When(offers_delivery=True, then=10),
             default=0,
             output_field=DecimalField()
         )
-        
-        # User-specific boosts
-        if user:
-            # Boost for vendors user has ordered from before
-            score = score + Case(
-                When(orders__user=user, then=20),
-                default=0,
-                output_field=DecimalField()
-            )
-            
-            # Boost for vendors in user's favorites
-            score = score + Case(
-                When(favorites__user=user, then=30),
-                default=0,
-                output_field=DecimalField()
-            )
-        
-        return score
+
+        # Base score for all vendors
+        score_expr += 5
+
+        return score_expr
     
     def _create_vendor_search_dict(self, vendor: VendorProfile, user: Optional[User]) -> Dict:
         """Create vendor dictionary for search results"""
@@ -309,7 +277,7 @@ class VendorSearchView(APIView):
                 logo_url = None
         
         # Get price range from menu items
-        menu_items = vendor.menu_items.all()
+        menu_items = vendor.products.all()
         price_range = None
         if menu_items.exists():
             prices = [item.price for item in menu_items if item.price]
@@ -329,9 +297,9 @@ class VendorSearchView(APIView):
             'business_description': vendor.business_description,
             'business_address': vendor.business_address,
             'logo': logo_url,
-            'rating': float(vendor.avg_rating or 0),
-            'total_reviews': vendor.total_reviews or 0,
-            'is_featured': vendor.is_featured,
+            'rating': float(getattr(vendor, 'avg_rating', 0)),
+            'total_reviews': getattr(vendor, 'total_reviews', 0),
+            'is_featured': False,  # Placeholder - no featured system implemented yet
             'offers_delivery': vendor.offers_delivery,
             'delivery_time': self._estimate_delivery_time(vendor),
             'service_areas': vendor.service_areas.split(',') if vendor.service_areas else [],
@@ -339,8 +307,8 @@ class VendorSearchView(APIView):
             'closing_hours': vendor.closing_hours.strftime('%H:%M') if vendor.closing_hours else None,
             'is_open': self._is_vendor_open(vendor),
             'price_range': price_range,
-            'menu_item_count': vendor.menu_item_count or 0,
-            'search_score': float(vendor.search_score or 0),
+            'menu_item_count': getattr(vendor, 'menu_item_count', 0),
+            'search_score': float(getattr(vendor, 'search_score', 0)),
             'distance': None,  # Can be calculated on frontend with user coordinates
         }
     
@@ -467,4 +435,3 @@ class SearchFiltersView(APIView):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-

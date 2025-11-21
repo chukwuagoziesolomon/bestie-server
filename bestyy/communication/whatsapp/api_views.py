@@ -250,7 +250,7 @@ def test_ai_response(request):
     """
     try:
         message_text = request.data.get('message', 'Hello, how are you?')
-        model = request.data.get('model', 'meta-llama/llama-3.3-8b-instruct:free')
+        model = request.data.get('model', 'mistralai/mistral-7b-instruct')
         
         ai_service = WhatsAppAIService()
         

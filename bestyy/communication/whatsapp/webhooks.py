@@ -627,7 +627,7 @@ No active verification found. Please start the signup process at: bestyy.com/sig
         # Show recent orders for the user
         try:
             from bestyy.restaurant_features.order.models import Order
-            recent_orders = Order.objects.filter(user=user).order_by('-created_at')[:3]
+            recent_orders = Order.objects.filter(customer=user).order_by('-created_at')[:3]
 
             if recent_orders:
                 orders_text = "📦 *Your Recent Orders*\n\n"

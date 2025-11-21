@@ -279,6 +279,12 @@ CORS_ALLOW_HEADERS = [
     'user-agent',
     'x-csrftoken',
     'x-requested-with',
+    'x-cart-token',  # For JWT-based cart system
+]
+
+# CORS expose headers (so frontend can read them from responses)
+CORS_EXPOSE_HEADERS = [
+    'x-cart-token',
 ]
 
 # CORS allowed methods

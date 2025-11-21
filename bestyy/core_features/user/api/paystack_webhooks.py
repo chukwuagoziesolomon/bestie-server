@@ -4,7 +4,6 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.conf import settings
 from django.utils import timezone
-from bestyy.core_features.user.models import Payment
 from bestyy.restaurant_features.order.models import Order
 from decimal import Decimal
 import json
@@ -28,11 +27,12 @@ def _send_code_notifications(order):
         if order.vendor and order.vendor.user and order.vendor.user.phone:
             vendor_message = (
                 f"🍽️ New Order Ready!\n\n"
-                f"Order #{order.id} - {order.order_name}\n"
-                f"Customer: {order.user.get_full_name() or order.user.email}\n"
+                f"Order #{order.order_number}\n"
+                f"Customer: {order.customer.get_full_name() if order.customer else 'Guest'}\n"
                 f"Address: {order.delivery_address}\n\n"
-                f"🚴 Courier will arrive with pickup code.\n"
-                f"Enter the 6-digit code here to confirm pickup and receive payment.\n\n"
+                f"📋 *Pickup Code: {order.pickup_code}*\n\n"
+                f"🚴 When courier arrives, verify this code to confirm pickup.\n"
+                f"💰 Payment will be transferred automatically after verification.\n\n"
                 f"Reply with 'help' for more info."
             )
 
@@ -50,11 +50,12 @@ def _send_code_notifications(order):
         if order.courier and order.courier.user and order.courier.user.phone:
             courier_message = (
                 f"🚴 New Delivery Assignment!\n\n"
-                f"Order #{order.id} - {order.order_name}\n"
+                f"Order #{order.order_number}\n"
                 f"Pickup: {order.vendor.business_name}\n"
                 f"Delivery: {order.delivery_address}\n\n"
-                f"📱 Customer will provide delivery OTP.\n"
-                f"Enter the 6-digit OTP here to confirm delivery and receive payment.\n\n"
+                f"📱 *Delivery OTP: {order.delivery_otp}*\n\n"
+                f"Customer will verify this code upon delivery.\n"
+                f"💰 Payment will be transferred automatically after verification.\n\n"
                 f"Reply with 'help' for more info."
             )
 
@@ -86,24 +87,24 @@ def _send_payment_receipt(order):
         items = []
         for order_item in order.items.all():
             items.append({
-                'name': order_item.menu_item.dish_name,
-                'description': order_item.menu_item.item_description,
+                'name': order_item.product.name if order_item.product else 'Unknown',
+                'description': order_item.product.description if order_item.product else '',
                 'quantity': order_item.quantity,
                 'total_price': float(order_item.price * order_item.quantity),
-                'image_url': order_item.menu_item.image.url if order_item.menu_item.image else None
+                'image_url': (order_item.product.image.url if hasattr(order_item.product.image, 'url') else str(order_item.product.image)) if order_item.product and order_item.product.image else None
             })
 
         receipt_data = {
             'order_id': order.id,
-            'order_date': order.order_placed_at.strftime('%B %d, %Y at %I:%M %p'),
-            'customer_name': f"{order.user.first_name} {order.user.last_name}".strip() or order.user.email,
-            'vendor_name': order.vendor.business_name,
+            'order_date': order.created_at.strftime('%B %d, %Y at %I:%M %p'),
+            'customer_name': f"{order.customer.first_name} {order.customer.last_name}".strip() if order.customer else 'Guest',
+            'vendor_name': order.vendor.business_name if order.vendor else 'Unknown',
             'items': items,
-            'subtotal': float(order.total_price),
-            'delivery_fee': float(order.delivery_fee),
+            'subtotal': float(order.total_amount),
+            'delivery_fee': float(order.delivery_fee) if order.delivery_fee else 0.0,
             'service_fee': 0.0,  # Not implemented yet
             'discount': 0.0,     # Not implemented yet
-            'total_amount': float(order.total_price + order.delivery_fee),
+            'total_amount': float(order.total_amount) + (float(order.delivery_fee) if order.delivery_fee else 0.0),
             'payment_method': 'Bank Transfer',
             'payment_reference': f"ORDER-{order.id}",
             'delivery_address': order.delivery_address,
@@ -111,11 +112,11 @@ def _send_payment_receipt(order):
         }
 
         # Send receipt to user
-        if order.user.phone:
+        if order.customer and order.customer.phone:
             user_message = f"""🧾 *Payment Receipt - Bestyy*
 
-Order #{order.id}
-Date: {receipt_data['order_date']}
+Order #{order.order_number}
+Date: {receipt_data['order_date']}"
 
 📍 *Items Ordered:*
 """
@@ -135,15 +136,18 @@ Reference: {receipt_data['payment_reference']}
 🚚 Delivery Address: {order.delivery_address}
 ⏰ Estimated Delivery: 30-45 minutes
 
+📱 *Delivery OTP: {order.delivery_otp}*
+(Give this code to courier upon delivery)
+
 Thank you for choosing Bestyy! 🍽️"""
 
             result = meta_service.send_message(
-                to=order.user.phone,
+                to=order.customer.phone,
                 message=user_message
             )
 
             if result.get('success'):
-                logger.info(f"Payment receipt sent to user {order.user.phone}")
+                logger.info(f"Payment receipt sent to user {order.customer.phone}")
             else:
                 logger.error(f"Failed to send receipt to user: {result.get('message')}")
 
@@ -151,7 +155,7 @@ Thank you for choosing Bestyy! 🍽️"""
         if order.vendor and order.vendor.user and order.vendor.user.phone:
             vendor_message = f"""💰 *Payment Received - Bestyy*
 
-Order #{order.id} - Payment Confirmed!
+Order #{order.order_number} - Payment Confirmed!
 
 📦 *Order Details:*
 """
@@ -186,7 +190,7 @@ Please prepare the order for pickup! 🍽️"""
         if order.courier and order.courier.user and order.courier.user.phone:
             courier_message = f"""🚴 *New Delivery Assignment - Bestyy*
 
-Order #{order.id} - Payment Confirmed!
+Order #{order.order_number} - Payment Confirmed!
 
 📦 *Delivery Details:*
 """
@@ -259,10 +263,8 @@ def paystack_webhook(request):
         # Handle different event types
         if event == 'charge.success':
             return handle_charge_success(data)
-        elif event == 'dedicatedaccount.assign.success':
-            return handle_dva_assignment_success(data)
-        elif event == 'dedicatedaccount.assign.failed':
-            return handle_dva_assignment_failed(data)
+        elif event == 'bank.transfer.rejected':
+            return handle_bank_transfer_rejected(data)
         elif event == 'customeridentification.success':
             return handle_customer_identification_success(data)
         elif event == 'customeridentification.failed':
@@ -303,30 +305,36 @@ def handle_charge_success(data):
         # Extract payment details
         amount = data.get('amount', 0) / 100  # Convert from kobo to naira
         reference = data.get('reference')
+        channel = data.get('channel', 'unknown')  # bank_transfer, card, ussd, etc.
         authorization = data.get('authorization', {})
         metadata = data.get('metadata', {})
+        paid_at = data.get('paid_at')
+
+        logger.info(f"💰 Payment received via {channel}: Reference={reference}, Amount=₦{amount}")
 
         # Check if this is an order payment (new conditional payment flow)
         if reference.startswith('order_'):
-            # Extract order ID from reference
+            # Extract order ID from reference (UUID format: order_<uuid>_<timestamp>)
             try:
                 parts = reference.split('_')
                 if len(parts) >= 2:
-                    order_id = int(parts[1])
+                    # Order ID is the middle part (UUID), timestamp is optional at the end
+                    order_id = parts[1]
 
-                    # Get the order
+                    # Get the order (order.id is a UUID, not an int)
                     order = Order.objects.get(id=order_id)
 
                     # Confirm payment
-                    order.confirm_payment()
-
-                    # Store payout amounts from metadata
-                    if 'vendor_amount' in metadata:
-                        order.vendor_payout_amount = Decimal(str(metadata['vendor_amount']))
-                    if 'courier_amount' in metadata:
-                        order.courier_payout_amount = Decimal(str(metadata['courier_amount']))
-                    if 'platform_commission' in metadata:
-                        order.platform_commission = Decimal(str(metadata['platform_commission']))
+                    if not order.payment_confirmed:
+                        order.payment_confirmed = True
+                        order.payment_confirmed_at = timezone.now()
+                        order.payment_status = True
+                        order.payment_reference = reference
+                        order.payment_method = f"Paystack {channel}"
+                        
+                        logger.info(f"✅ Payment confirmed for Order #{order.id} - Channel: {channel} - Amount: ₦{amount}")
+                    else:
+                        logger.info(f"⚠️  Payment already confirmed for Order #{order.id}, skipping duplicate")
 
                     order.save()
 
@@ -389,44 +397,6 @@ def handle_charge_success(data):
             except (ValueError, Order.DoesNotExist) as e:
                 logger.error(f"Failed to process order payment: {reference} - {str(e)}")
 
-        # Check if this is a dedicated virtual account payment (legacy)
-        elif authorization.get('channel') == 'dedicated_nuban':
-            account_number = authorization.get('receiver_bank_account_number')
-            sender_name = authorization.get('sender_name')
-            sender_bank = authorization.get('sender_bank')
-            sender_account = authorization.get('sender_bank_account_number')
-
-            # Find the DVA and associated user
-            try:
-                dva = DedicatedVirtualAccount.objects.get(
-                    account_number=account_number,
-                    is_active=True
-                )
-                user = dva.user
-
-                # Create payment record
-                payment = Payment.objects.create(
-                    user=user,
-                    amount=amount,
-                    currency='NGN',
-                    payment_method='bank_transfer',
-                    paystack_reference=reference,
-                    paystack_transaction_id=data.get('id'),
-                    status='successful',
-                    description=f'Bank transfer from {sender_name} ({sender_bank})',
-                    metadata={
-                        'sender_name': sender_name,
-                        'sender_bank': sender_bank,
-                        'sender_account': sender_account,
-                        'receiver_account': account_number,
-                        'channel': 'dedicated_nuban'
-                    }
-                )
-
-                logger.info(f"Payment recorded: {payment.id} for user {user.id}, amount: ₦{amount}")
-
-            except DedicatedVirtualAccount.DoesNotExist:
-                logger.warning(f"DVA not found for account number: {account_number}")
 
         return Response({'status': 'success'})
 
@@ -435,56 +405,73 @@ def handle_charge_success(data):
         return Response({'error': 'Processing error'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-def handle_dva_assignment_success(data):
+
+
+
+
+def handle_bank_transfer_rejected(data):
     """
-    Handle successful DVA assignment
+    Handle bank transfer rejection (incorrect amount or fraud detection)
     """
     try:
-        customer_id = data.get('customer', {}).get('customer_code')
+        reference = data.get('reference')
+        amount = data.get('amount', 0) / 100  # Convert from kobo to naira
+        reason = data.get('gateway_response', 'Transfer rejected')
+        
+        logger.warning(f"Bank transfer rejected for reference {reference}: {reason}")
 
-        # Find user by customer ID
-        try:
-            dva = DedicatedVirtualAccount.objects.get(paystack_customer_id=customer_id)
-            dva.is_assigned = True
-            dva.is_active = True
-            dva.save()
+        # Check if this is an order payment
+        if reference and reference.startswith('order_'):
+            try:
+                parts = reference.split('_')
+                if len(parts) >= 2:
+                    order_id = int(parts[1])
+                    order = Order.objects.get(id=order_id)
 
-            logger.info(f"DVA assignment successful for user {dva.user.id}")
+                    # Add note to order about rejection
+                    rejection_note = f"\n[{timezone.now().strftime('%Y-%m-%d %H:%M')}] Payment rejected: {reason}"
+                    if order.notes:
+                        order.notes += rejection_note
+                    else:
+                        order.notes = rejection_note
+                    
+                    order.save()
 
-        except DedicatedVirtualAccount.DoesNotExist:
-            logger.warning(f"DVA not found for customer ID: {customer_id}")
+                    logger.info(f"Order #{order.id} updated with rejection note")
+
+                    # Notify customer about rejection via WhatsApp
+                    try:
+                        from bestyy.communication.whatsapp.services.meta_whatsapp_service import MetaWhatsAppService
+                        
+                        if order.customer and order.customer.phone:
+                            meta_service = MetaWhatsAppService()
+                            message = (
+                                f"⚠️ *Payment Rejected - Order #{order.id}*\n\n"
+                                f"Your bank transfer was rejected.\n"
+                                f"Reason: {reason}\n\n"
+                                f"Expected Amount: ₦{float(order.total_amount):,.2f}\n"
+                                f"Your Transfer: ₦{amount:,.2f}\n\n"
+                                f"Please ensure you send the exact amount and try again.\n\n"
+                                f"Need help? Reply to this message."
+                            )
+                            
+                            meta_service.send_message(
+                                to=order.customer.phone,
+                                message=message
+                            )
+                            
+                            logger.info(f"Rejection notification sent to customer {order.customer.phone}")
+                    
+                    except Exception as e:
+                        logger.error(f"Error sending rejection notification: {str(e)}")
+
+            except (ValueError, Order.DoesNotExist) as e:
+                logger.error(f"Failed to process rejected transfer for order: {reference} - {str(e)}")
 
         return Response({'status': 'success'})
 
     except Exception as e:
-        logger.error(f"Error handling DVA assignment success: {str(e)}")
-        return Response({'error': 'Processing error'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-def handle_dva_assignment_failed(data):
-    """
-    Handle failed DVA assignment
-    """
-    try:
-        customer_id = data.get('customer', {}).get('customer_code')
-        reason = data.get('reason', 'Unknown reason')
-
-        # Find user by customer ID and mark as failed
-        try:
-            dva = DedicatedVirtualAccount.objects.get(paystack_customer_id=customer_id)
-            dva.is_assigned = False
-            dva.is_active = False
-            dva.save()
-
-            logger.warning(f"DVA assignment failed for user {dva.user.id}: {reason}")
-
-        except DedicatedVirtualAccount.DoesNotExist:
-            logger.warning(f"DVA not found for customer ID: {customer_id}")
-
-        return Response({'status': 'success'})
-
-    except Exception as e:
-        logger.error(f"Error handling DVA assignment failed: {str(e)}")
+        logger.error(f"Error handling bank transfer rejection: {str(e)}")
         return Response({'error': 'Processing error'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 

@@ -45,10 +45,10 @@ class OrderStatusBroadcastService:
                         'type': 'order_status_update',
                         'data': {
                             'order_id': order.id,
-                            'customer_name': f"{order.user.first_name} {order.user.last_name}".strip() or order.user.email,
+                            'customer_name': f"{order.customer.first_name} {order.customer.last_name}".strip() if order.customer else 'Guest',
                             'status': order.status,
                             'previous_status': previous_status,
-                            'total_amount': float(order.total_price),
+                            'total_amount': float(order.total_amount),
                             'timestamp': timezone.now().isoformat(),
                             'message': f'Order #{order.id} status changed to {order.status}'
                         }
@@ -90,7 +90,7 @@ class OrderStatusBroadcastService:
                 'type': 'payment_confirmed',
                 'data': {
                     'order_id': order.id,
-                    'amount': float(order.total_price),
+                    'amount': float(order.total_amount),
                     'payment_method': order.payment_method,
                     'transaction_id': f"CONFIRMED_{order.id}_{int(timezone.now().timestamp())}",
                     'timestamp': timezone.now().isoformat(),

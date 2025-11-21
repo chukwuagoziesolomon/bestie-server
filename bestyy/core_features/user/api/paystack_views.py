@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.contrib.auth.decorators import permission_required
 from django.shortcuts import get_object_or_404
-from bestyy.core_features.user.models import User, DedicatedVirtualAccount
+from bestyy.core_features.user.models import User
 from bestyy.core_features.user.services.paystack_service import PaystackService
 from django.utils import timezone
 from datetime import timedelta
@@ -13,130 +13,12 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def create_dedicated_account(request):
-    """
-    Create a dedicated virtual account for the authenticated user
-    """
-    user = request.user
-    preferred_bank = request.data.get('preferred_bank', 'titan-paystack')
-
-    # Check if user already has a DVA
-    if hasattr(user, 'dedicated_account') and user.dedicated_account.is_active:
-        return Response({
-            'error': 'User already has an active dedicated virtual account',
-            'account': {
-                'account_number': user.dedicated_account.account_number,
-                'account_name': user.dedicated_account.account_name,
-                'bank_name': user.dedicated_account.bank_name
-            }
-        }, status=status.HTTP_400_BAD_REQUEST)
-
-    paystack_service = PaystackService()
-
-    # Try single-step assignment first (recommended)
-    result = paystack_service.assign_dedicated_account(user, preferred_bank)
-
-    if result['success']:
-        account = result['account']
-        return Response({
-            'success': True,
-            'message': 'Dedicated virtual account created successfully',
-            'account': {
-                'account_number': account.account_number,
-                'account_name': account.account_name,
-                'bank_name': account.bank_name,
-                'bank_slug': account.bank_slug,
-                'is_active': account.is_active
-            }
-        })
-
-    # If single-step fails, try multi-step
-    logger.warning(f"Single-step DVA creation failed for user {user.id}: {result.get('error')}")
-    result = paystack_service.create_dedicated_account(user, preferred_bank)
-
-    if result['success']:
-        account = result['account']
-        return Response({
-            'success': True,
-            'message': 'Dedicated virtual account created successfully',
-            'account': {
-                'account_number': account.account_number,
-                'account_name': account.account_name,
-                'bank_name': account.bank_name,
-                'bank_slug': account.bank_slug,
-                'is_active': account.is_active
-            }
-        })
-
-    return Response({
-        'error': result.get('error', 'Failed to create dedicated virtual account')
-    }, status=status.HTTP_400_BAD_REQUEST)
 
 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def get_dedicated_account(request):
-    """
-    Get the user's dedicated virtual account details
-    """
-    user = request.user
-
-    try:
-        account = user.dedicated_account
-        if not account.is_active:
-            return Response({
-                'error': 'Dedicated virtual account is not active'
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        return Response({
-            'account_number': account.account_number,
-            'account_name': account.account_name,
-            'bank_name': account.bank_name,
-            'bank_slug': account.bank_slug,
-            'is_active': account.is_active,
-            'is_assigned': account.is_assigned
-        })
-
-    except DedicatedVirtualAccount.DoesNotExist:
-        return Response({
-            'error': 'No dedicated virtual account found. Please create one first.'
-        }, status=status.HTTP_404_NOT_FOUND)
 
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def requery_account(request):
-    """
-    Requery the user's dedicated account for pending transactions
-    """
-    user = request.user
-    date = request.data.get('date')  # Optional: YYYY-MM-DD format
 
-    try:
-        account = user.dedicated_account
-        if not account.is_active:
-            return Response({
-                'error': 'Dedicated virtual account is not active'
-            }, status=status.HTTP_400_BAD_REQUEST)
 
-        paystack_service = PaystackService()
-        transactions = paystack_service.requery_account(
-            account.account_number,
-            account.bank_slug,
-            date
-        )
-
-        return Response({
-            'success': True,
-            'transactions': transactions
-        })
-
-    except DedicatedVirtualAccount.DoesNotExist:
-        return Response({
-            'error': 'No dedicated virtual account found'
-        }, status=status.HTTP_404_NOT_FOUND)
 
 
 
@@ -352,92 +234,5 @@ def get_supported_banks(request):
     })
 
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def add_split_payment(request):
-    """
-    Add split payment configuration to user's dedicated account
-    """
-    user = request.user
-    subaccount_code = request.data.get('subaccount_code')
-    split_code = request.data.get('split_code')
-
-    if not subaccount_code and not split_code:
-        return Response({
-            'error': 'Either subaccount_code or split_code is required'
-        }, status=status.HTTP_400_BAD_REQUEST)
-
-    try:
-        account = user.dedicated_account
-        if not account.is_active:
-            return Response({
-                'error': 'Dedicated virtual account is not active'
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        paystack_service = PaystackService()
-        result = paystack_service.add_split_payment(
-            account.account_number,
-            subaccount_code,
-            split_code
-        )
-
-        if result['success']:
-            # Update local record
-            if subaccount_code:
-                account.subaccount_code = subaccount_code
-            if split_code:
-                account.split_code = split_code
-            account.save()
-
-            return Response({
-                'success': True,
-                'message': 'Split payment configuration added successfully'
-            })
-
-        return Response({
-            'error': result.get('error', 'Failed to add split payment')
-        }, status=status.HTTP_400_BAD_REQUEST)
-
-    except DedicatedVirtualAccount.DoesNotExist:
-        return Response({
-            'error': 'No dedicated virtual account found'
-        }, status=status.HTTP_404_NOT_FOUND)
 
 
-@api_view(['DELETE'])
-@permission_classes([IsAuthenticated])
-def remove_split_payment(request):
-    """
-    Remove split payment configuration from user's dedicated account
-    """
-    user = request.user
-
-    try:
-        account = user.dedicated_account
-        if not account.is_active:
-            return Response({
-                'error': 'Dedicated virtual account is not active'
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        paystack_service = PaystackService()
-        result = paystack_service.remove_split_payment(account.account_number)
-
-        if result['success']:
-            # Update local record
-            account.subaccount_code = None
-            account.split_code = None
-            account.save()
-
-            return Response({
-                'success': True,
-                'message': 'Split payment configuration removed successfully'
-            })
-
-        return Response({
-            'error': result.get('error', 'Failed to remove split payment')
-        }, status=status.HTTP_400_BAD_REQUEST)
-
-    except DedicatedVirtualAccount.DoesNotExist:
-        return Response({
-            'error': 'No dedicated virtual account found'
-        }, status=status.HTTP_404_NOT_FOUND)

@@ -32,4 +32,8 @@ python manage.py migrate
 echo "Creating cache table..."
 python manage.py createcachetable
 
+# Create superuser automatically
+echo "Creating superuser..."
+python create_superuser.py
+
 echo "Build completed successfully!"

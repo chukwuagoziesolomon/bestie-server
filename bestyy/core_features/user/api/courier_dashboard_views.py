@@ -72,6 +72,7 @@ def dashboard_analytics(request):
     # Current period metrics
     current_orders = Order.objects.filter(
         courier=courier,
+        payment_confirmed=True,
         status__in=['delivered', 'completed'],
         delivered_at__date__gte=start_date,
         delivered_at__date__lte=end_date
@@ -83,6 +84,7 @@ def dashboard_analytics(request):
     
     previous_orders = Order.objects.filter(
         courier=courier,
+        payment_confirmed=True,
         status__in=['delivered', 'completed'],
         delivered_at__date__gte=previous_start,
         delivered_at__date__lte=previous_end
@@ -132,6 +134,7 @@ def dashboard_analytics(request):
     yesterday = end_date - timedelta(days=1)
     yesterday_earnings = Order.objects.filter(
         courier=courier,
+        payment_confirmed=True,
         status__in=['delivered', 'completed'],
         delivered_at__date=yesterday
     ).aggregate(Sum('total_amount'))['total_amount__sum'] or 0
@@ -139,6 +142,7 @@ def dashboard_analytics(request):
     day_before_yesterday = yesterday - timedelta(days=1)
     day_before_earnings = Order.objects.filter(
         courier=courier,
+        payment_confirmed=True,
         status__in=['delivered', 'completed'],
         delivered_at__date=day_before_yesterday
     ).aggregate(Sum('total_amount'))['total_amount__sum'] or 0
@@ -202,6 +206,7 @@ def earnings_chart_data(request):
         # Get orders for this day
         day_orders = Order.objects.filter(
             courier=courier,
+            payment_confirmed=True,
             status__in=['delivered', 'completed'],
             delivered_at__date=current_date
         )

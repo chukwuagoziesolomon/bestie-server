@@ -99,6 +99,7 @@ def vendor_transaction_summary(request):
     # Base queryset for the date range
     base_queryset = Order.objects.filter(
         vendor=vendor,
+        payment_confirmed=True,
         created_at__date__range=[start_date, end_date]
     )
     
@@ -203,6 +204,7 @@ def vendor_earnings_breakdown(request):
     # Get earnings data - calculate commission in Python to avoid Django ORM issues
     earnings_data = Order.objects.filter(
         vendor=vendor,
+        payment_confirmed=True,
         created_at__date__range=[start_date, end_date],
         status__in=['completed', 'delivered']  # Only completed orders
     ).annotate(
@@ -270,7 +272,10 @@ def vendor_payment_history(request):
     vendor = request.user.vendor_profile
     
     # Get payment status breakdown
-    payment_status = Order.objects.filter(vendor=vendor).values(
+    payment_status = Order.objects.filter(
+        vendor=vendor,
+        payment_confirmed=True
+    ).values(
         'payment_status'
     ).annotate(
         count=Count('id'),
@@ -280,6 +285,7 @@ def vendor_payment_history(request):
     # Get recent payments - avoid payment_status field issues
     recent_payments = Order.objects.filter(
         vendor=vendor,
+        payment_confirmed=True,
         status__in=['completed', 'delivered']  # Use order status instead
     ).order_by('-created_at')[:10]
     
@@ -296,6 +302,7 @@ def vendor_payment_history(request):
     current_month = timezone.now().replace(day=1)
     monthly_completed = Order.objects.filter(
         vendor=vendor,
+        payment_confirmed=True,
         created_at__gte=current_month,
         status__in=['completed', 'delivered']  # Use order status instead
     ).aggregate(
@@ -345,6 +352,7 @@ def vendor_transaction_analytics(request):
     current_month = timezone.now().replace(day=1)
     current_month_orders = Order.objects.filter(
         vendor=vendor,
+        payment_confirmed=True,
         created_at__gte=current_month
     )
     
@@ -352,6 +360,7 @@ def vendor_transaction_analytics(request):
     prev_month = (current_month - timedelta(days=1)).replace(day=1)
     prev_month_orders = Order.objects.filter(
         vendor=vendor,
+        payment_confirmed=True,
         created_at__gte=prev_month,
         created_at__lt=current_month
     )
@@ -388,6 +397,7 @@ def vendor_transaction_analytics(request):
     current_month_start = timezone.now().replace(day=1)
     day_performance = Order.objects.filter(
         vendor=vendor,
+        payment_confirmed=True,
         created_at__gte=current_month_start
     ).extra(
         select={'day_of_week': "strftime('%%w', created_at)"}
@@ -553,12 +563,14 @@ def vendor_top_dishes(request):
     # Get current period orders
     current_orders = Order.objects.filter(
         vendor=vendor,
+        payment_confirmed=True,
         created_at__gte=start_date
     )
     
     # Get previous period orders for comparison
     prev_orders = Order.objects.filter(
         vendor=vendor,
+        payment_confirmed=True,
         created_at__gte=prev_start_date,
         created_at__lt=prev_end_date
     )

@@ -252,7 +252,7 @@ class UnifiedVendorRecommendationView(APIView):
         # User preference alignment (5% weight)
         if user:
             # Boost for vendors user has ordered from before
-            if Order.objects.filter(user=user, vendor=vendor).exists():
+            if Order.objects.filter(customer=user, vendor=vendor).exists():
                 score += 8
             # Boost for favorited vendors
             if Favorite.objects.filter(user=user, favorite_type='venue', vendor=vendor).exists():
@@ -363,7 +363,7 @@ class UnifiedVendorRecommendationView(APIView):
                 logo_url = None
 
         # Get menu items for food images - get all available items
-        menu_items = getattr(vendor, 'menu_items', None)
+        menu_items = getattr(vendor, 'products', None)
         if menu_items is not None:
             menu_items = menu_items.all()[:10]  # Get up to 10 menu items for better display
         else:

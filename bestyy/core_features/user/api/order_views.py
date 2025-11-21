@@ -604,8 +604,8 @@ class OrderConfirmationView(APIView):
             # Get payment status
             payment_status = self._get_payment_status(order)
 
-            # Get DVA details for bank transfer orders
-            dva_details = None
+            # Get PwT details for bank transfer orders
+            pwt_details = None
             if order.payment_method == 'bank_transfer' and not getattr(order, 'payment_confirmed', False):
                 dva_details = self._get_dva_details(order)
 
@@ -1210,7 +1210,7 @@ class OrderConfirmationView(APIView):
             pass  # Continue even if post-processing fails
 
     def _get_dva_details(self, order):
-        """Get DVA bank transfer details for the order"""
+        """Get Pay with Transfer bank details for the order"""
         try:
             from bestyy.core_features.user.services.paystack_service import PaystackService
 
@@ -1221,55 +1221,58 @@ class OrderConfirmationView(APIView):
                 order.payment_reference = reference
                 order.save()
 
-            # For authenticated users, try to create DVA account
-            if order.customer and order.customer.is_authenticated:
-                paystack_service = PaystackService()
-                result = paystack_service.create_dedicated_account(order.customer)
+            # Use Pay with Transfer for all users
+            paystack_service = PaystackService()
+            amount_kobo = int(order.total_amount * 100)  # Convert to kobo
 
-                if result.get('success') and result.get('account'):
-                    account = result['account']
-                    return {
-                        'account_number': account.account_number,
-                        'account_name': account.account_name,
-                        'bank_name': account.bank_name,
-                        'amount': float(order.total_amount),
-                        'reference': reference,
-                        'instructions': [
-                            '1. Copy the account details above',
-                            '2. Transfer the exact amount to this account',
-                            '3. Use the reference number as payment reference',
-                            '4. Click "I\'ve Transferred the Money" button below',
-                            '5. Your payment will be verified automatically'
-                        ],
-                        'expires_in': '24 hours',  # DVA accounts typically expire
-                        'support_contact': '0800-BESTYY'
-                    }
-                else:
-                    # Fallback to generic account for authenticated users
-                    pass
+            result = paystack_service.initialize_pay_with_transfer(
+                email=order.customer.email if order.customer else 'guest@bestyy.com',
+                amount=amount_kobo,
+                reference=reference,
+                expiry_hours=8
+            )
 
-            # For anonymous users or when DVA creation fails, provide generic bank transfer instructions
-            # Generate a more realistic-looking account number
-            import random
-            account_number = f"{random.randint(200, 999)}{random.randint(1000000, 9999999)}"
+            if result.get('success') and result.get('account_details'):
+                account_details = result['account_details']
+                return {
+                    'account_number': account_details['account_number'],
+                    'account_name': account_details['account_name'],
+                    'bank_name': account_details['bank_name'],
+                    'amount': account_details['amount_expected'],
+                    'reference': reference,
+                    'instructions': [
+                        '1. Copy the account details above',
+                        '2. Transfer the exact amount to this account',
+                        '3. Use the reference number as payment reference',
+                        '4. Click "I\'ve Transferred the Money" button below',
+                        '5. Your payment will be verified automatically'
+                    ],
+                    'expires_at': account_details.get('expires_at'),
+                    'expires_in': '8 hours',
+                    'support_contact': '0800-BESTYY'
+                }
+            else:
+                # Fallback to generic account if PwT fails
+                import random
+                account_number = f"{random.randint(200, 999)}{random.randint(1000000, 9999999)}"
 
-            return {
-                'account_number': account_number,
-                'account_name': 'Bestyy Customer Account',
-                'bank_name': 'Titan Paystack',
-                'amount': float(order.total_amount),
-                'reference': reference,
-                'instructions': [
-                    '1. Copy the account details above',
-                    '2. Transfer the exact amount to this account',
-                    '3. Use the reference number as payment reference',
-                    '4. Click "I\'ve Transferred the Money" button below',
-                    '5. Your payment will be verified automatically',
-                    '6. If you\'re not logged in, please login/register to confirm payment'
-                ],
-                'expires_in': '24 hours',
-                'support_contact': '0800-BESTYY'
-            }
+                return {
+                    'account_number': account_number,
+                    'account_name': 'Bestyy Customer Account',
+                    'bank_name': 'Titan Paystack',
+                    'amount': float(order.total_amount),
+                    'reference': reference,
+                    'instructions': [
+                        '1. Copy the account details above',
+                        '2. Transfer the exact amount to this account',
+                        '3. Use the reference number as payment reference',
+                        '4. Click "I\'ve Transferred the Money" button below',
+                        '5. Your payment will be verified automatically',
+                        '6. If you\'re not logged in, please login/register to confirm payment'
+                    ],
+                    'expires_in': '8 hours',
+                    'support_contact': '0800-BESTYY'
+                }
 
         except Exception as e:
             return {
@@ -1821,8 +1824,35 @@ class UnifiedCheckoutView(APIView):
                 'payment_methods': available_methods
             })
 
-        # Step 4: Create Order now (pending), add items (M2M), then generate payment instructions
+        # Step 4: Validate stock availability before creating order
+        from bestyy.core_features.user.cart_utils import get_available_stock
+        
+        stock_errors = []
+        for mi in menu_items:
+            qty = quantities_by_id.get(mi.id, 0)
+            if qty > 0:
+                available = get_available_stock(mi)
+                if available < qty:
+                    stock_errors.append({
+                        'product': mi.name,
+                        'requested': qty,
+                        'available': available
+                    })
+        
+        if stock_errors:
+            error_msg = "Insufficient stock for: " + ", ".join(
+                [f"{e['product']} (requested: {e['requested']}, available: {e['available']})" 
+                 for e in stock_errors]
+            )
+            return Response({
+                'success': False,
+                'error': error_msg,
+                'stock_errors': stock_errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Create Order now (pending), add items (M2M), then generate payment instructions
         # Persist delivery address as text (flattened from Address model)
+        # Note: Stock reservations will be created automatically when payment_confirmed=True (via signal)
         delivery_address_text = f"{selected_address.street_address or ''} {selected_address.city or ''} {selected_address.state or ''} {selected_address.postal_code or ''}".strip()
 
         order = Order.objects.create(
@@ -2157,3 +2187,45 @@ class OrderReceiptView(APIView):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class OrderTrackingView(APIView):
+    """
+    Get order tracking information - Public endpoint (no auth required)
+    Anyone with the order ID can track it
+    
+    GET /api/user/orders/{order_id}/tracking/
+    """
+    permission_classes = []  # No authentication required
+    authentication_classes = []  # No authentication required
+    
+    def get(self, request, pk):
+        """Get order tracking details"""
+        try:
+            order = get_object_or_404(Order, id=pk)
+            
+            # Public endpoint - anyone with order ID can track
+            # No permission check needed for tracking
+            
+            # Build tracking timeline
+            timeline = []
+            timeline.append({'status': 'placed', 'label': 'Order Placed', 'timestamp': order.created_at.isoformat() if order.created_at else None, 'completed': True, 'icon': ''})
+            if order.payment_confirmed:
+                timeline.append({'status': 'payment_confirmed', 'label': 'Payment Confirmed', 'timestamp': order.payment_confirmed_at.isoformat() if order.payment_confirmed_at else None, 'completed': True, 'icon': ''})
+            if order.confirmed_at:
+                timeline.append({'status': 'confirmed', 'label': 'Vendor Confirmed', 'timestamp': order.confirmed_at.isoformat(), 'completed': True, 'icon': ''})
+            elif order.status in ['confirmed', 'preparing', 'ready', 'out_for_delivery', 'delivered']:
+                timeline.append({'status': 'confirmed', 'label': 'Vendor Confirmed', 'timestamp': None, 'completed': True, 'icon': ''})
+            else:
+                timeline.append({'status': 'confirmed', 'label': 'Waiting for Vendor', 'timestamp': None, 'completed': False, 'icon': ''})
+            if order.status == 'delivered':
+                timeline.append({'status': 'delivered', 'label': 'Delivered', 'timestamp': getattr(order, 'delivered_at', timezone.now()).isoformat(), 'completed': True, 'icon': ''})
+            completed_steps = sum(1 for step in timeline if step['completed'])
+            progress_percentage = int((completed_steps / len(timeline)) * 100) if timeline else 0
+            return Response({'success': True, 'order': {'id': str(order.id), 'order_number': order.order_number, 'status': order.status, 'created_at': order.created_at.isoformat() if order.created_at else None, 'total_amount': float(order.total_amount) if order.total_amount else 0, 'delivery_address': order.delivery_address, 'vendor': {'name': order.vendor.business_name if order.vendor else None, 'phone': order.vendor.phone if order.vendor else None}, 'timeline': timeline, 'progress_percentage': progress_percentage}}, status=status.HTTP_200_OK)
+        except Order.DoesNotExist:
+            return Response({'success': False, 'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

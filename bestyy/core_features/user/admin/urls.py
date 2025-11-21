@@ -14,6 +14,8 @@ from bestyy.core_features.user.api.admin_views import (
     CourierVerificationView,
     UnifiedVerificationView,
     AllPendingVerificationsView,
+    ProfitAnalyticsView,
+    SystemSettingsView,
 )
 from bestyy.core_features.user.api.user_views import UserDetailView
 from bestyy.payment_analytics.analytics.views import RecentActivityView
@@ -24,6 +26,8 @@ from bestyy.core_features.user.api.admin_revenue_views import AdminRevenueAnalyt
 from bestyy.core_features.user.admin.views.dashboard_stats import (
     AdminDashboardStatsView,
     AdminRevenueBreakdownView,
+    AdminOrderActivityView,
+    AdminTopVendorsView,
 )
 from bestyy.core_features.user.api.admin_user_management import UserSuspensionView, SuspendedUsersListView
 from bestyy.core_features.user.api.admin_auth_views import AdminLoginView, AdminLogoutView
@@ -41,6 +45,7 @@ urlpatterns = [
     path('vendors/<int:vendor_id>/reject/', VendorVerificationView.as_view(), name='admin-vendor-reject'),
 
     # Courier management endpoints
+    path('couriers/', PendingCouriersList.as_view(), name='admin-couriers-list'),
     path('couriers/pending/', PendingCouriersList.as_view(), name='admin-pending-couriers'),
     path('couriers/<int:courier_id>/', CourierVerificationView.as_view(), name='admin-courier-detail'),
     path('couriers/<int:courier_id>/approve/', CourierVerificationView.as_view(), name='admin-courier-approve'),
@@ -75,7 +80,8 @@ urlpatterns = [
     
     # Dashboard KPI endpoints
     path('dashboard/stats/', AdminDashboardStatsView.as_view(), name='admin-dashboard-stats'),
-    # Top vendors and order activity endpoints not yet implemented in new module
+    path('dashboard/order-activity/', AdminOrderActivityView.as_view(), name='admin-order-activity'),
+    path('dashboard/top-vendors/', AdminTopVendorsView.as_view(), name='admin-top-vendors'),
     
     # User management endpoints
     path('users/<str:user_type>/<int:user_id>/suspend/', UserSuspensionView.as_view(), name='admin-user-suspend'),
@@ -95,6 +101,14 @@ urlpatterns = [
     # Order management endpoints
     path('orders/', AdminOrderListView.as_view(), name='admin-orders-list'),
     path('orders/stats/', OrderStatsView.as_view(), name='admin-orders-stats'),
+    
+    # Profit analytics endpoints
+    path('profit/', ProfitAnalyticsView.as_view(), name='admin-profit-analytics'),
+    path('profit/detailed/', ProfitAnalyticsView.as_view(), {'detailed': True}, name='admin-profit-detailed'),
+    
+    # System settings endpoints
+    path('settings/', SystemSettingsView.as_view(), name='admin-settings-list'),
+    path('settings/<str:key>/', SystemSettingsView.as_view(), name='admin-settings-detail'),
 
     # Activity and analytics
     path('', include('bestyy.payment_analytics.analytics.urls')),

@@ -25,6 +25,8 @@ class WhatsAppConversation(models.Model):
     pending_email = models.CharField(max_length=128, null=True, blank=True, help_text="Pending user email during onboarding")
     pending_link_action = models.CharField(max_length=64, null=True, blank=True, help_text="Type of pending account link (e.g. email)")
     pending_verification_action = models.CharField(max_length=64, null=True, blank=True, help_text="Pending verification action (e.g. expired_code)")
+    awaiting_address = models.BooleanField(default=False, help_text="Whether we're currently awaiting a delivery address from the user")
+    context_data = models.JSONField(default=dict, blank=True, help_text="Additional context data for order tracking, etc.")
     
     class Meta:
         db_table = 'whatsapp_conversations'
@@ -114,7 +116,7 @@ class AIResponseTemplate(models.Model):
     variables = models.JSONField(default=list, help_text="List of variable names used in template")
     
     # AI settings
-    ai_model = models.CharField(max_length=100, default='meta-llama/llama-3.3-8b-instruct:free')
+    ai_model = models.CharField(max_length=100, default='mistralai/mistral-7b-instruct')
     temperature = models.FloatField(default=0.7)
     max_tokens = models.IntegerField(default=150)
     

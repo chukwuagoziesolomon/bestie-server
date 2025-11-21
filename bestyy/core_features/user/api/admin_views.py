@@ -14,7 +14,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView
 
-from bestyy.core_features.user.models import VendorProfile, CourierProfile, User
+from bestyy.core_features.user.models import VendorProfile, CourierProfile, User, SystemSettings
 from bestyy.restaurant_features.order.models import Order
 from bestyy.core_features.user.serializers.vendor_serializers import VendorProfileSerializer
 from bestyy.core_features.user.serializers.courier_serializers import CourierProfileSerializer
@@ -1885,8 +1885,9 @@ class ProfitAnalyticsView(APIView):
         # Get all completed orders in date range
         completed_orders = Order.objects.filter(
             status='completed',
-            user_receipt_confirmed_at__date__gte=start_date,
-            user_receipt_confirmed_at__date__lte=end_date
+            payment_confirmed=True,
+            delivered_at__date__gte=start_date,
+            delivered_at__date__lte=end_date
         ).select_related('vendor', 'courier')
 
         # Calculate totals
@@ -1894,15 +1895,13 @@ class ProfitAnalyticsView(APIView):
             total=Sum('total_amount')
         )['total'] or Decimal('0.00')
 
-        total_platform_commission = completed_orders.aggregate(
-            total=Sum('platform_commission')
-        )['total'] or Decimal('0.00')
-
         total_delivery_fees = completed_orders.aggregate(
             total=Sum('delivery_fee')
         )['total'] or Decimal('0.00')
 
-        # Platform profit = commission + delivery fees (since platform keeps both)
+        # Platform profit = delivery fees (10% commission calculated from revenue)
+        platform_commission_rate = Decimal('0.10')  # 10% commission
+        total_platform_commission = total_revenue * platform_commission_rate
         total_profit = total_platform_commission + total_delivery_fees
         total_orders = completed_orders.count()
 
@@ -1918,13 +1917,14 @@ class ProfitAnalyticsView(APIView):
             month_end = month_end - timedelta(days=month_end.day)
 
             month_orders = completed_orders.filter(
-                user_receipt_confirmed_at__date__gte=month_start,
-                user_receipt_confirmed_at__date__lte=month_end
+                delivered_at__date__gte=month_start,
+                delivered_at__date__lte=month_end
             )
 
-            month_profit = month_orders.aggregate(
-                total=Sum('platform_commission') + Sum('delivery_fee')
-            )['total'] or Decimal('0.00')
+            month_revenue = month_orders.aggregate(total=Sum('total_amount'))['total'] or Decimal('0.00')
+            month_delivery_fees = month_orders.aggregate(total=Sum('delivery_fee'))['total'] or Decimal('0.00')
+            month_commission = month_revenue * platform_commission_rate
+            month_profit = month_commission + month_delivery_fees
 
             monthly_trend.append({
                 'month': month_start.strftime('%Y-%m'),
@@ -1959,9 +1959,9 @@ class ProfitAnalyticsView(APIView):
         # Get completed orders with profit details
         completed_orders = Order.objects.filter(
             status='completed',
-            user_receipt_confirmed_at__date__gte=start_date,
-            user_receipt_confirmed_at__date__lte=end_date
-        ).select_related('vendor', 'courier').order_by('-user_receipt_confirmed_at')
+            delivered_at__date__gte=start_date,
+            delivered_at__date__lte=end_date
+        ).select_related('vendor', 'courier').order_by('-delivered_at')
 
         # Calculate profit for each order
         order_data = []
@@ -1969,18 +1969,19 @@ class ProfitAnalyticsView(APIView):
         total_revenue = Decimal('0.00')
 
         for order in completed_orders:
-            # Profit = platform commission + delivery fee
-            profit = (order.platform_commission or Decimal('0.00')) + (order.delivery_fee or Decimal('0.00'))
+            # Calculate commission as 10% of order total
+            platform_commission_rate = Decimal('0.10')
+            commission = order.total_amount * platform_commission_rate
+            delivery_fee = order.delivery_fee or Decimal('0.00')
+            profit = commission + delivery_fee
 
             order_data.append({
                 'order_id': order.id,
                 'order_number': order.order_number or f'#{order.id}',
-                'completed_at': order.user_receipt_confirmed_at.isoformat() if order.user_receipt_confirmed_at else None,
+                'completed_at': order.delivered_at.isoformat() if order.delivered_at else None,
                 'total_amount': str(order.total_amount),
-                'platform_commission': str(order.platform_commission or '0.00'),
-                'delivery_fee': str(order.delivery_fee or '0.00'),
-                'vendor_payout': str(order.vendor_payout_amount or '0.00'),
-                'courier_payout': str(order.courier_payout_amount or '0.00'),
+                'platform_commission': str(commission),
+                'delivery_fee': str(delivery_fee),
                 'profit': str(profit)
             })
 

@@ -20,7 +20,10 @@ class UserManager(BaseUserManager):
         if not email:
             raise ValueError('The Email must be set')
         email = self.normalize_email(email)
-        user = self.model(email=email, **extra_fields)
+        # Auto-generate unique username from email and role
+        role = extra_fields.get('role', 'user')
+        username = f"{email}_{role}"
+        user = self.model(username=username, email=email, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
         return user
@@ -60,8 +63,8 @@ class User(AbstractUser):
         ('email', 'Email'),
     ]
     
-    username = None  # Remove username field
-    email = models.EmailField(unique=True, verbose_name='email address')
+    username = models.CharField(max_length=255, unique=True, blank=True)  # Internal unique field (email_role)
+    email = models.EmailField(verbose_name='email address', db_index=True)  # Removed unique=True to allow multiple role profiles
     
     # Social authentication fields
     social_provider = models.CharField(
@@ -125,14 +128,24 @@ class User(AbstractUser):
         help_text='Current status of user subscription'
     )
 
-    USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = []
+    USERNAME_FIELD = 'username'
+    REQUIRED_FIELDS = ['email']
     
     objects = UserManager()
     
     class Meta:
         verbose_name = 'user'
         verbose_name_plural = 'users'
+        # Allow same email for different roles, but prevent duplicate role registrations
+        constraints = [
+            models.UniqueConstraint(fields=['email', 'role'], name='unique_email_role')
+        ]
+    
+    def save(self, *args, **kwargs):
+        # Auto-generate unique username from email and role if not set
+        if not self.username:
+            self.username = f"{self.email}_{self.role}"
+        super().save(*args, **kwargs)
     
     def __str__(self):
         return self.email
@@ -169,9 +182,42 @@ class UserProfile(models.Model):
     )
     email_notifications = models.BooleanField(default=True)
     push_notifications = models.BooleanField(default=True)
-    
+
+    # Onboarding fields
+    onboarding_completed = models.BooleanField(default=False)
+    onboarding_step = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text='Current step in onboarding flow'
+    )
+    dietary_restrictions = models.TextField(blank=True, null=True)
+    budget_preference = models.CharField(max_length=100, blank=True, null=True)
+    budget_auto_check = models.BooleanField(default=False)
+    preferred_meal_times = models.CharField(max_length=255, blank=True, null=True)
+    food_category_preference = models.CharField(max_length=100, blank=True, null=True)
+    terms_accepted = models.BooleanField(default=False)
+    terms_accepted_at = models.DateTimeField(null=True, blank=True)
+
     def __str__(self):
         return f"{self.user.email} Profile"
+
+    def complete_onboarding(self):
+        """Mark onboarding as completed"""
+        self.onboarding_completed = True
+        self.onboarding_step = 'completed'
+        self.save()
+
+    def accept_terms(self):
+        """Mark terms as accepted"""
+        self.terms_accepted = True
+        self.terms_accepted_at = timezone.now()
+        self.save()
+
+    def set_onboarding_step(self, step):
+        """Set the current onboarding step"""
+        self.onboarding_step = step
+        self.save()
 
 
 class VendorProfile(models.Model):
@@ -267,6 +313,18 @@ class VendorProfile(models.Model):
         blank=True,
         help_text='When the account was last activated'
     )
+    
+    # Paystack Transfer recipient details
+    paystack_recipient_code = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="Paystack transfer recipient code for automated payments"
+    )
+    bank_account_number = models.CharField(max_length=20, blank=True, null=True)
+    bank_code = models.CharField(max_length=10, blank=True, null=True)
+    bank_name = models.CharField(max_length=100, blank=True, null=True)
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -392,6 +450,18 @@ class CourierProfile(models.Model):
         blank=True,
         help_text='When the account was last activated'
     )
+    
+    # Paystack Transfer recipient details
+    paystack_recipient_code = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="Paystack transfer recipient code for automated payments"
+    )
+    bank_account_number = models.CharField(max_length=20, blank=True, null=True)
+    bank_code = models.CharField(max_length=10, blank=True, null=True)
+    bank_name = models.CharField(max_length=100, blank=True, null=True)
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -467,33 +537,6 @@ class TransferRecipient(models.Model):
     
     def __str__(self):
         return f"{self.account_name} - {self.bank_name}"
-
-
-class DedicatedVirtualAccount(models.Model):
-    """Dedicated Virtual Account for Paystack payments"""
-    user = models.OneToOneField(
-        User,
-        on_delete=models.CASCADE,
-        related_name='dedicated_account'
-    )
-    paystack_customer_id = models.CharField(max_length=100, null=True, blank=True)
-    paystack_dedicated_account_id = models.CharField(max_length=100, null=True, blank=True)
-    bank_name = models.CharField(max_length=100)
-    bank_slug = models.CharField(max_length=100, null=True, blank=True)
-    account_number = models.CharField(max_length=20)
-    account_name = models.CharField(max_length=255)
-    is_active = models.BooleanField(default=True)
-    is_assigned = models.BooleanField(default=True)
-    assignment_type = models.CharField(max_length=50, null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    def __str__(self):
-        return f"{self.account_name} - {self.account_number}"
-
-    class Meta:
-        verbose_name = 'Dedicated Virtual Account'
-        verbose_name_plural = 'Dedicated Virtual Accounts'
 
 
 class Transfer(models.Model):
@@ -1122,7 +1165,7 @@ class PendingUser(models.Model):
         ('courier', 'Courier'),
     ]
 
-    email = models.EmailField(unique=True)
+    email = models.EmailField()  # Removed unique=True to allow multi-role pending registrations
     password = models.CharField(max_length=128)
     first_name = models.CharField(max_length=150)
     last_name = models.CharField(max_length=150)
@@ -1454,3 +1497,107 @@ class PendingUser(models.Model):
 
     def __str__(self):
         return f"{self.email} - {self.user_type} (Pending)"
+
+
+class AnonymousCart(models.Model):
+    """
+    Cart for anonymous users - identified by cart_token
+    Works across all browsers without cookies
+    Uses JWT-based cart tokens for universal browser compatibility
+    """
+    cart_token = models.CharField(
+        max_length=255, 
+        unique=True, 
+        db_index=True,
+        help_text='Unique JWT token for anonymous cart identification'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    expires_at = models.DateTimeField(
+        help_text='Auto-expire old carts after 30 days'
+    )
+    
+    class Meta:
+        db_table = 'anonymous_carts'
+        verbose_name = 'Anonymous Cart'
+        verbose_name_plural = 'Anonymous Carts'
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"Cart {self.cart_token[:8]}... (expires: {self.expires_at.strftime('%Y-%m-%d')})"
+
+
+class WebsiteCartItem(models.Model):
+    """
+    Individual items in a cart - works for both anonymous and authenticated users
+    Replaces session-based cart with JWT token-based cart for universal compatibility
+    """
+    # Link to anonymous cart (for guests)
+    anonymous_cart = models.ForeignKey(
+        AnonymousCart, 
+        on_delete=models.CASCADE, 
+        null=True, 
+        blank=True,
+        related_name='items',
+        help_text='Cart for anonymous users'
+    )
+    
+    # Link to authenticated user (for logged-in users)
+    user = models.ForeignKey(
+        User, 
+        on_delete=models.CASCADE, 
+        null=True, 
+        blank=True,
+        related_name='website_cart_items',
+        help_text='User for authenticated cart'
+    )
+    
+    # Product and quantity
+    product = models.ForeignKey(
+        'product.Product', 
+        on_delete=models.CASCADE,
+        related_name='website_cart_items',
+        help_text='Product being added to cart'
+    )
+    quantity = models.PositiveIntegerField(
+        default=1,
+        validators=[MinValueValidator(1)],
+        help_text='Quantity of product in cart'
+    )
+    
+    # Price snapshot at time of adding to cart
+    price_snapshot = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text='Price at time of adding to cart'
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'website_cart_items'
+        verbose_name = 'Website Cart Item'
+        verbose_name_plural = 'Website Cart Items'
+        ordering = ['-created_at']
+        # Ensure a product appears only once per cart
+        constraints = [
+            models.UniqueConstraint(
+                fields=['anonymous_cart', 'product'],
+                name='unique_anonymous_cart_product',
+                condition=models.Q(anonymous_cart__isnull=False)
+            ),
+            models.UniqueConstraint(
+                fields=['user', 'product'],
+                name='unique_user_product',
+                condition=models.Q(user__isnull=False)
+            )
+        ]
+    
+    def __str__(self):
+        owner = self.user.email if self.user else f"Anonymous {self.anonymous_cart.cart_token[:8]}"
+        return f"{owner} - {self.product.name} x{self.quantity}"
+    
+    def get_subtotal(self):
+        """Calculate subtotal for this cart item"""
+        return self.price_snapshot * self.quantity

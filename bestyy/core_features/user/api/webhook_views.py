@@ -15,12 +15,12 @@ from django.conf import settings
 import hmac
 import hashlib
 
-from .serializers import (
+from .webhook_serializers import (
     VerificationWebhookSerializer,
     OrderWebhookSerializer,
     WebhookResponseSerializer
 )
-from ..models import VendorProfile, CourierProfile, Order
+from ..models import VendorProfile, CourierProfile
 from ..utils.websocket_notifications import (
     send_vendor_notification,
     send_courier_notification,
@@ -870,5 +870,152 @@ class UnifiedWebhookView(APIView):
                 {"error": "Failed to process vendor contact info webhook"}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class PaystackTransferWebhookView(APIView):
+    """
+    Webhook endpoint for Paystack transfer events.
+    
+    Handles:
+    - transfer.success: Transfer completed successfully
+    - transfer.failed: Transfer failed
+    - transfer.reversed: Transfer was reversed
+    """
+    permission_classes = [AllowAny]
+    
+    def verify_paystack_signature(self, request):
+        """Verify that the webhook came from Paystack."""
+        paystack_signature = request.headers.get('x-paystack-signature')
+        
+        if not paystack_signature:
+            logger.warning("⚠️ Paystack webhook received without signature")
+            return False
+        
+        # Compute hash
+        body = request.body
+        computed_signature = hmac.new(
+            settings.PAYSTACK_SECRET_KEY.encode('utf-8'),
+            body,
+            hashlib.sha512
+        ).hexdigest()
+        
+        return hmac.compare_digest(paystack_signature, computed_signature)
+    
+    def post(self, request):
+        """Handle incoming Paystack transfer webhooks."""
+        try:
+            # Verify signature
+            if not self.verify_paystack_signature(request):
+                logger.error("❌ Invalid Paystack webhook signature")
+                return Response(
+                    {"error": "Invalid signature"},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+            
+            # Parse webhook data
+            webhook_data = request.data
+            event = webhook_data.get('event')
+            data = webhook_data.get('data', {})
+            
+            logger.info(f"📥 Paystack webhook received: {event}")
+            
+            # Extract transfer details
+            transfer_code = data.get('transfer_code')
+            reference = data.get('reference')
+            transfer_status = data.get('status')
+            amount = data.get('amount')  # In kobo
+            reason = data.get('reason')
+            
+            if not reference:
+                logger.error("❌ Paystack webhook missing reference")
+                return Response(
+                    {"error": "Missing reference"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Import Order model
+            from bestyy.restaurant_features.order.models import Order
+            
+            # Find order by transfer reference
+            order = None
+            is_vendor_payment = reference.startswith('vendor_')
+            is_courier_payment = reference.startswith('courier_')
+            
+            if is_vendor_payment:
+                order = Order.objects.filter(vendor_transfer_reference=reference).first()
+            elif is_courier_payment:
+                order = Order.objects.filter(courier_transfer_reference=reference).first()
+            
+            if not order:
+                logger.warning(f"⚠️ No order found for transfer reference: {reference}")
+                return Response(
+                    {"message": "Order not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Update order based on event type
+            if event == 'transfer.success':
+                if is_vendor_payment:
+                    order.vendor_transfer_code = transfer_code
+                    order.vendor_transfer_status = 'success'
+                    order.vendor_paid = True
+                    order.vendor_paid_at = timezone.now()
+                    order.save()
+                    logger.info(f"✅ Vendor payment successful for order {order.order_number}")
+                
+                elif is_courier_payment:
+                    order.courier_transfer_code = transfer_code
+                    order.courier_transfer_status = 'success'
+                    order.courier_paid = True
+                    order.courier_paid_at = timezone.now()
+                    order.save()
+                    logger.info(f"✅ Courier payment successful for order {order.order_number}")
+            
+            elif event == 'transfer.failed':
+                if is_vendor_payment:
+                    order.vendor_transfer_code = transfer_code
+                    order.vendor_transfer_status = 'failed'
+                    order.save()
+                    logger.error(f"❌ Vendor payment failed for order {order.order_number}")
+                
+                elif is_courier_payment:
+                    order.courier_transfer_code = transfer_code
+                    order.courier_transfer_status = 'failed'
+                    order.save()
+                    logger.error(f"❌ Courier payment failed for order {order.order_number}")
+            
+            elif event == 'transfer.reversed':
+                if is_vendor_payment:
+                    order.vendor_transfer_code = transfer_code
+                    order.vendor_transfer_status = 'reversed'
+                    order.vendor_paid = False
+                    order.vendor_paid_at = None
+                    order.save()
+                    logger.warning(f"⚠️ Vendor payment reversed for order {order.order_number}")
+                
+                elif is_courier_payment:
+                    order.courier_transfer_code = transfer_code
+                    order.courier_transfer_status = 'reversed'
+                    order.courier_paid = False
+                    order.courier_paid_at = None
+                    order.save()
+                    logger.warning(f"⚠️ Courier payment reversed for order {order.order_number}")
+            
+            return Response({
+                "success": True,
+                "message": f"Transfer {event} processed",
+                "order_number": order.order_number,
+                "reference": reference,
+                "timestamp": timezone.now().isoformat()
+            }, status=status.HTTP_200_OK)
+        
+        except Exception as e:
+            logger.error(f"❌ Error processing Paystack transfer webhook: {str(e)}")
+            return Response(
+                {"error": "Failed to process webhook"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 

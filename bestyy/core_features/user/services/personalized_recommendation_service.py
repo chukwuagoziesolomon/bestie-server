@@ -192,7 +192,7 @@ class PersonalizedRecommendationService:
             pass
 
         # Analyze order history
-        orders = Order.objects.filter(user=user).order_by('-created_at')
+        orders = Order.objects.filter(customer=user).order_by('-created_at')
 
         if orders.exists():
             insights['order_frequency'] = PersonalizedRecommendationService._calculate_order_frequency(orders)
@@ -200,7 +200,7 @@ class PersonalizedRecommendationService:
             insights['last_order_date'] = orders.first().created_at
 
             # Extract preferred cuisines from order history
-            ordered_items = MenuItem.objects.filter(order_items__order__user=user).distinct()
+            ordered_items = MenuItem.objects.filter(order_items__order__customer=user).distinct()
             cuisines_from_orders = ordered_items.values_list('category', flat=True).distinct()
             insights['preferred_cuisines'].extend(list(cuisines_from_orders))
 

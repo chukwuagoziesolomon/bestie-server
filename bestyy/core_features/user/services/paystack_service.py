@@ -1,7 +1,7 @@
 import requests
 from django.conf import settings
 from django.utils import timezone
-from bestyy.core_features.user.models import User, DedicatedVirtualAccount
+from bestyy.core_features.user.models import User
 import logging
 
 logger = logging.getLogger(__name__)
@@ -42,17 +42,30 @@ class PaystackService:
             response.raise_for_status()
             return response.json()
 
+        except requests.exceptions.HTTPError as e:
+            # For HTTP errors (4xx, 5xx), try to extract error message from response
+            try:
+                error_data = response.json()
+                error_message = error_data.get('message', str(e))
+                logger.error(f"Paystack API HTTP error: {error_message}")
+                return {'status': False, 'message': error_message}
+            except (ValueError, AttributeError):
+                logger.error(f"Paystack API HTTP error: {str(e)}")
+                return {'status': False, 'message': str(e)}
         except requests.exceptions.RequestException as e:
-            logger.error(f"Paystack API error: {str(e)}")
-            return None
+            logger.error(f"Paystack API request error: {str(e)}")
+            return {'status': False, 'message': str(e)}
 
-    def create_customer(self, user):
+    def create_customer(self, user, phone_number=None):
         """Create a customer on Paystack"""
+        # Use provided phone number, or fall back to user profile
+        phone = phone_number or (getattr(user.profile, 'phone', '') if hasattr(user, 'profile') else '')
+
         data = {
             'email': user.email,
             'first_name': user.first_name or '',
             'last_name': user.last_name or '',
-            'phone': getattr(user.profile, 'phone', '') if hasattr(user, 'profile') else ''
+            'phone': phone
         }
 
         response = self._make_request('POST', '/customer', data)
@@ -66,123 +79,10 @@ class PaystackService:
 
         return {'success': False, 'error': response.get('message') if response else 'API Error'}
 
-    def create_dedicated_account(self, user, preferred_bank='titan-paystack'):
-        """Create a dedicated virtual account for a user"""
 
-        # First, ensure customer exists
-        customer_result = self.create_customer(user)
-        if not customer_result['success']:
-            return customer_result
 
-        customer_id = customer_result['customer_id']
 
-        # Create dedicated account
-        data = {
-            'customer': customer_id,
-            'preferred_bank': preferred_bank
-        }
 
-        response = self._make_request('POST', '/dedicated_account', data)
-
-        if response and response.get('status'):
-            account_data = response.get('data', {})
-
-            # Save to database
-            dva, created = DedicatedVirtualAccount.objects.update_or_create(
-                user=user,
-                defaults={
-                    'paystack_customer_id': customer_id,
-                    'paystack_dedicated_account_id': account_data.get('id'),
-                    'bank_name': account_data.get('bank', {}).get('name', ''),
-                    'bank_slug': account_data.get('bank', {}).get('slug', ''),
-                    'account_number': account_data.get('account_number', ''),
-                    'account_name': account_data.get('account_name', ''),
-                    'is_active': account_data.get('active', True),
-                    'is_assigned': account_data.get('assigned', True),
-                    'assignment_type': account_data.get('assignment', {}).get('account_type')
-                }
-            )
-
-            return {
-                'success': True,
-                'account': dva,
-                'account_data': account_data
-            }
-
-        return {'success': False, 'error': response.get('message') if response else 'API Error'}
-
-    def assign_dedicated_account(self, user, preferred_bank='titan-paystack'):
-        """Single-step account assignment (alternative to create_dedicated_account)"""
-
-        data = {
-            'email': user.email,
-            'first_name': user.first_name or '',
-            'last_name': user.last_name or '',
-            'phone': getattr(user.profile, 'phone', '') if hasattr(user, 'profile') else '',
-            'preferred_bank': preferred_bank,
-            'country': 'NG'  # Nigeria
-        }
-
-        response = self._make_request('POST', '/dedicated_account/assign', data)
-
-        if response and response.get('status'):
-            account_data = response.get('data', {})
-
-            # Save to database
-            dva, created = DedicatedVirtualAccount.objects.update_or_create(
-                user=user,
-                defaults={
-                    'paystack_customer_id': account_data.get('customer', {}).get('customer_code'),
-                    'paystack_dedicated_account_id': account_data.get('id'),
-                    'bank_name': account_data.get('bank', {}).get('name', ''),
-                    'bank_slug': account_data.get('bank', {}).get('slug', ''),
-                    'account_number': account_data.get('account_number', ''),
-                    'account_name': account_data.get('account_name', ''),
-                    'is_active': account_data.get('active', True),
-                    'is_assigned': account_data.get('assigned', True),
-                    'assignment_type': account_data.get('assignment', {}).get('account_type')
-                }
-            )
-
-            return {
-                'success': True,
-                'account': dva,
-                'account_data': account_data
-            }
-
-        return {'success': False, 'error': response.get('message') if response else 'API Error'}
-
-    def get_customer_accounts(self, user):
-        """Get customer's dedicated accounts"""
-        try:
-            dva = DedicatedVirtualAccount.objects.get(user=user)
-            customer_id = dva.paystack_customer_id
-
-            response = self._make_request('GET', f'/customer/{customer_id}')
-
-            if response and response.get('status'):
-                return response.get('data', {}).get('dedicated_account', {})
-            return None
-
-        except DedicatedVirtualAccount.DoesNotExist:
-            return None
-
-    def requery_account(self, account_number, provider_slug='titan-paystack', date=None):
-        """Requery dedicated account for pending transactions"""
-        if date is None:
-            date = timezone.now().date().isoformat()
-
-        params = {
-            'account_number': account_number,
-            'provider_slug': provider_slug,
-            'date': date
-        }
-
-        response = self._make_request('GET', '/dedicated_account/requery', params)
-
-        if response and response.get('status'):
-            return response.get('data', [])
-        return []
 
     def bulk_transfer(self, transfer_items, currency='NGN', source='balance'):
         """
@@ -210,13 +110,6 @@ class PaystackService:
         """Deprecated: Do not use split payments."""
         raise NotImplementedError('Split logic is deprecated.')
 
-    def get_supported_banks_providers(self):
-        """Get list of supported banks for dedicated accounts"""
-        response = self._make_request('GET', '/dedicated_account/available_providers')
-
-        if response and response.get('status'):
-            return response.get('data', [])
-        return []
 
     def create_transfer_recipient(self, recipient_type, name, account_number, bank_code, currency='NGN'):
         """Create a transfer recipient for payouts"""
@@ -272,6 +165,92 @@ class PaystackService:
             return response.get('data', {})
         return None
 
+    def initialize_pay_with_transfer(self, email, amount, reference=None, expiry_hours=8):
+        """
+        Initialize Pay with Transfer - creates temporary bank account for single transaction
+
+        Args:
+            email (str): Customer email
+            amount (int): Amount in kobo (smallest currency unit)
+            reference (str, optional): Unique reference
+            expiry_hours (int): Hours until account expires (1-8)
+
+        Returns:
+            dict: {'success': bool, 'account_details': dict or 'error': str}
+        """
+        import uuid
+        from datetime import datetime, timedelta
+
+        if not reference:
+            reference = f"pwt_{uuid.uuid4().hex[:12]}"
+
+        # Calculate expiry time - default to 8 hours if invalid
+        if not (1 <= expiry_hours <= 8):
+            expiry_hours = 8
+
+        expires_at = (datetime.utcnow() + timedelta(hours=expiry_hours)).isoformat() + 'Z'
+
+        data = {
+            'email': email,
+            'amount': amount,
+            'reference': reference,
+            'bank_transfer': {
+                'account_expires_at': expires_at
+            }
+        }
+
+        logger.info(f"Initializing Pay with Transfer for {email}, amount: ₦{amount/100:.2f}")
+
+        response = self._make_request('POST', '/charge', data)
+
+        if response and response.get('status'):
+            charge_data = response.get('data', {})
+
+            # Extract banking details - for Pay with Transfer, account details are in charge_data
+            account_number = charge_data.get('account_number')
+            account_name = charge_data.get('account_name')
+
+            # Handle bank info - can be string or dict
+            bank_info = charge_data.get('bank', {})
+            if isinstance(bank_info, dict):
+                bank_name = bank_info.get('name', 'Paystack Bank Transfer')
+            else:
+                bank_name = bank_info or 'Paystack Bank Transfer'
+
+            customer_info = charge_data.get('customer', {})
+
+            # Use account_expires_at from API response if available
+            actual_expires_at = charge_data.get('account_expires_at', expires_at)
+
+            account_details = {
+                'account_number': account_number,
+                'account_name': account_name,
+                'bank_name': bank_name,
+                'amount_expected': charge_data.get('amount', 0) / 100,  # Convert back to naira
+                'reference': reference,
+                'expires_at': actual_expires_at,
+                'charge_id': charge_data.get('id'),
+                'customer_email': customer_info.get('email'),
+                'status': charge_data.get('status')
+            }
+
+            # Validate we got the essential banking details
+            if not all([account_details['account_number'], account_details['account_name']]):
+                logger.error("Pay with Transfer missing account details")
+                return {'success': False, 'error': 'Bank account details not provided'}
+
+            logger.info(f"Pay with Transfer initialized: Account {account_details['account_number']} expires {expires_at}")
+
+            return {
+                'success': True,
+                'account_details': account_details,
+                'charge_data': charge_data
+            }
+        else:
+            error_msg = response.get('message') if response else 'API Error'
+            logger.error(f"Pay with Transfer initialization failed: {error_msg}")
+            return {'success': False, 'error': error_msg}
+
     def initialize_transaction(self, payment_data):
         """Initialize a Paystack transaction with optional split payment"""
 
@@ -281,6 +260,19 @@ class PaystackService:
         reference = payment_data.get('reference')
         callback_url = payment_data.get('callback_url')
         metadata = payment_data.get('metadata', {})
+
+        # Validate required fields
+        if not email:
+            return {'success': False, 'error': 'Email is required'}
+        if not amount or amount < 10000:  # Paystack minimum is ₦100 = 10,000 kobo
+            return {'success': False, 'error': 'Amount must be at least ₦100 (10,000 kobo)'}
+        if not reference:
+            return {'success': False, 'error': 'Reference is required'}
+
+        # Validate email format
+        import re
+        if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
+            return {'success': False, 'error': 'Invalid email format'}
 
         data = {
             'email': email,

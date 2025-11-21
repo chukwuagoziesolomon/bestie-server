@@ -7,6 +7,7 @@ The `urlpatterns` list routes URLs to views. For more information please see:
 from django.contrib import admin
 from django.urls import path, include, re_path
 from rest_framework.authtoken.views import obtain_auth_token
+from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib.auth import views as auth_views
@@ -81,6 +82,10 @@ urlpatterns = [
     # path('api/auth/social/', include('allauth.socialaccount.urls')),
     path('api/token/', obtain_auth_token, name='api_token_auth'),
     
+    # JWT Token endpoints
+    path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('api/token/verify/', TokenVerifyView.as_view(), name='token_verify'),
+    
     # API endpoints
     path('api/user/', include(('bestyy.core_features.user.urls', 'user'), namespace='user')),  # User-related endpoints
     path('api/orders/', include('bestyy.restaurant_features.order.urls')),  # Order-related endpoints
@@ -91,6 +96,12 @@ urlpatterns = [
     
     # For backward compatibility with frontend making requests to /api/api/admin/
     path('api/api/admin/', include('bestyy.core_features.user.admin.urls')),
+    
+    # Redirect /api/api/user/couriers/ to /api/user/admin/couriers/ for frontend compatibility
+    path('api/api/user/couriers/', RedirectView.as_view(url='/api/user/admin/couriers/', permanent=False)),
+    
+    # Redirect /api/user/couriers/ to /api/admin/couriers/ for frontend compatibility
+    path('api/user/couriers/', RedirectView.as_view(url='/api/admin/couriers/', permanent=False)),
     
     # Redirect for duplicate /api/ in social auth URL with query parameters
     path('api/api/auth/social/google/', lambda request: redirect(f"/api/auth/social/google/{'?' + request.META.get('QUERY_STRING', '') if request.META.get('QUERY_STRING') else ''}")),
@@ -119,6 +130,9 @@ urlpatterns = [
          RedirectView.as_view(url=reverse_lazy('total-orders-metric'), permanent=True)),
     path('user/admin/verification/pending/', 
          RedirectView.as_view(url=reverse_lazy('pending-verifications'), permanent=True)),
+    
+    # Paystack Transfer Webhook
+    path('api/webhooks/paystack/transfer/', include('bestyy.core_features.user.api.webhook_urls')),
     
     # Redirect for frontend compatibility (temporary)
     path('user/orders/', RedirectView.as_view(url='/api/user/orders/', permanent=False)),
@@ -179,6 +193,9 @@ urlpatterns = [
     path('user/vendors/transactions/earnings/', RedirectView.as_view(url='/api/user/vendors/transactions/earnings/', permanent=False)),
     path('user/vendors/transactions/payments/', RedirectView.as_view(url='/api/user/vendors/transactions/payments/', permanent=False)),
     path('user/vendors/transactions/analytics/', RedirectView.as_view(url='/api/user/vendors/transactions/analytics/', permanent=False)),
+
+    # Vendor recommendations redirect for frontend compatibility
+    path('user/vendors/recommendations/', RedirectView.as_view(url='/api/user/recommendations/', permanent=False)),
 ]
 
 # Serve media files in development

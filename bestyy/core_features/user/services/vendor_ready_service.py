@@ -6,7 +6,8 @@ import re
 from typing import Dict, Optional
 from django.db.models import Q
 from django.utils import timezone
-from ..models import Order, VendorProfile, CourierProfile
+from ..models import VendorProfile, CourierProfile
+from bestyy.restaurant_features.order.models import Order
 from .courier_location_service import CourierLocationService
 from .courier_notification_service import CourierNotificationService
 from .proximity_courier_service import ProximityCourierService
