@@ -26,7 +26,7 @@ services:
       - key: CLOUDINARY_API_SECRET
         sync: false
       - key: CORS_ALLOWED_ORIGINS
-        value: https://bestyy-web.vercel.app,https://bestie-server.onrender.com,https://your-frontend-domain.com,https://your-admin-domain.com
+        value: https://bestyy-web.vercel.app,https://bestie-admin.vercel.app,https://bestie-server.onrender.com
       - key: DJANGO_SUPERUSER_EMAIL
         value: admin@bestyy.com
       - key: DJANGO_SUPERUSER_PASSWORD

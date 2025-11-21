@@ -256,19 +256,25 @@ REST_FRAMEWORK = {
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
 
-# Default CORS allowed origins (for development)
-CORS_ALLOWED_ORIGINS = [
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    'http://localhost:3001',  # Admin frontend
-    'http://127.0.0.1:3001',  # Admin frontend
-    'http://localhost:8000',
-    'http://127.0.0.1:8000',
-    'https://bestie-admin.vercel.app',  # Production admin frontend
-    'https://bestyy-web.vercel.app',  # Production customer frontend
-]
-
-print(f"Default CORS_ALLOWED_ORIGINS: {CORS_ALLOWED_ORIGINS}")
+# CORS allowed origins - Prioritize environment variable
+env_cors_origins = config('CORS_ALLOWED_ORIGINS', default='')
+if env_cors_origins:
+    # If environment variable is set, use it (comma-separated list)
+    CORS_ALLOWED_ORIGINS = [origin.strip() for origin in env_cors_origins.split(',') if origin.strip()]
+    print(f"Using CORS_ALLOWED_ORIGINS from environment: {CORS_ALLOWED_ORIGINS}")
+else:
+    # Fallback to default (for local development)
+    CORS_ALLOWED_ORIGINS = [
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+        'http://localhost:3001',  # Admin frontend
+        'http://127.0.0.1:3001',  # Admin frontend
+        'http://localhost:8000',
+        'http://127.0.0.1:8000',
+        'https://bestie-admin.vercel.app',  # Production admin frontend
+        'https://bestyy-web.vercel.app',  # Production customer frontend
+    ]
+    print(f"Using default CORS_ALLOWED_ORIGINS: {CORS_ALLOWED_ORIGINS}")
 
 # CORS allowed headers
 CORS_ALLOW_HEADERS = [
@@ -393,21 +399,9 @@ if not DEBUG:
     print(f"=== PRODUCTION MODE ACTIVATED ===")
     print(f"=================================")
     
-    # Update CORS origins for production
-    CORS_ALLOWED_ORIGINS = [
-        'https://bestyy-web.vercel.app',
-        'https://bestie-admin.vercel.app',
-        'https://bestie-server.onrender.com',
-        'https://*.vercel.app',
-        'https://*.onrender.com',
-    ]
-    
-    # Also allow the environment variable if set
-    env_cors_origins = config('CORS_ALLOWED_ORIGINS', default='')
-    if env_cors_origins and isinstance(env_cors_origins, str):
-        CORS_ALLOWED_ORIGINS.extend(env_cors_origins.split(','))
-    
-    print(f"CORS_ALLOWED_ORIGINS set to: {CORS_ALLOWED_ORIGINS}")
+    # CORS origins are already set from environment variable at the top of settings.py
+    # No need to override here
+    print(f"Production CORS_ALLOWED_ORIGINS: {CORS_ALLOWED_ORIGINS}")
     
     # Update WebSocket URL for production
     WEBSOCKET_BASE_URL = config('WEBSOCKET_BASE_URL', default='wss://bestie-server.onrender.com')
