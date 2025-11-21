@@ -228,9 +228,6 @@ STORAGES = {
     },
 }
 
-# Backward compatibility
-DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
-
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
