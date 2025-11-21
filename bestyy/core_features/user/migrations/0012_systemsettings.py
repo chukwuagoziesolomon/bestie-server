@@ -8,7 +8,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('user', '0010_add_order_fields'),
+        ('user', '0011_dedicatedvirtualaccount'),
     ]
 
     operations = [
