@@ -1601,3 +1601,93 @@ class WebsiteCartItem(models.Model):
     def get_subtotal(self):
         """Calculate subtotal for this cart item"""
         return self.price_snapshot * self.quantity
+
+
+class Banner(models.Model):
+    """
+    Banner model for managing homepage and promotional banners
+    Recommended size: 1180x192 pixels
+    """
+    BANNER_TYPE_CHOICES = [
+        ('homepage', 'Homepage Banner'),
+        ('promotional', 'Promotional Banner'),
+        ('seasonal', 'Seasonal Banner'),
+        ('vendor_spotlight', 'Vendor Spotlight'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('inactive', 'Inactive'),
+        ('scheduled', 'Scheduled'),
+        ('expired', 'Expired'),
+    ]
+    
+    title = models.CharField(max_length=200, help_text='Banner title')
+    description = models.TextField(blank=True, null=True, help_text='Banner description')
+    banner_image = models.ImageField(
+        upload_to='banners/',
+        help_text='Recommended size: 1180x192 pixels'
+    )
+    banner_type = models.CharField(
+        max_length=20,
+        choices=BANNER_TYPE_CHOICES,
+        default='homepage',
+        help_text='Type of banner'
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='active',
+        help_text='Banner status'
+    )
+    priority = models.IntegerField(
+        default=0,
+        help_text='Higher priority banners appear first'
+    )
+    click_url = models.URLField(
+        blank=True,
+        null=True,
+        help_text='URL to redirect when banner is clicked'
+    )
+    display_start_date = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='When to start displaying the banner'
+    )
+    display_end_date = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='When to stop displaying the banner'
+    )
+    is_active = models.BooleanField(default=True, help_text='Whether banner is active')
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_banners',
+        help_text='Admin who created the banner'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-priority', '-created_at']
+        verbose_name = 'Banner'
+        verbose_name_plural = 'Banners'
+    
+    def __str__(self):
+        return f"{self.title} ({self.get_banner_type_display()})"
+    
+    def is_currently_active(self):
+        """Check if banner should be displayed now"""
+        if not self.is_active or self.status != 'active':
+            return False
+        
+        now = timezone.now()
+        if self.display_start_date and now < self.display_start_date:
+            return False
+        if self.display_end_date and now > self.display_end_date:
+            return False
+        
+        return True

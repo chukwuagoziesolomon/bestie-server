@@ -33,8 +33,13 @@ class AdminLoginView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Authenticate user
-        user = authenticate(request, email=email, password=password)
+        # Find user by email first, then authenticate with username
+        try:
+            user_obj = User.objects.get(email=email)
+            # Authenticate using username (USERNAME_FIELD), not email
+            user = authenticate(request, username=user_obj.username, password=password)
+        except User.DoesNotExist:
+            user = None
         
         if user is None:
             return Response(

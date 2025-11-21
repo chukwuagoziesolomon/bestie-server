@@ -78,12 +78,12 @@ def vendor_autocomplete(request):
         
         vendors = vendors.filter(search_q).distinct()
         
-        # Apply filters
-        if location:
-            vendors = vendors.filter(
-                Q(business_address__icontains=location) |
-                Q(service_areas__icontains=location)
-            )
+        # Apply filters (location filter removed - search by name regardless of location)
+        # if location:
+        #     vendors = vendors.filter(
+        #         Q(business_address__icontains=location) |
+        #         Q(service_areas__icontains=location)
+        #     )
         
         if category:
             vendors = vendors.filter(business_category__icontains=category)

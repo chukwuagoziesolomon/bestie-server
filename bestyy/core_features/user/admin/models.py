@@ -15,7 +15,7 @@ from rest_framework import status
 
 from bestyy.core_features.user.models import (
     VendorProfile, CourierProfile, UserProfile,
-    TransferRecipient, Transfer
+    TransferRecipient, Transfer, Banner
 )
 
 User = get_user_model()
@@ -88,3 +88,35 @@ class TransferAdmin(admin.ModelAdmin):
 
 admin.site.register(TransferRecipient, TransferRecipientAdmin)
 admin.site.register(Transfer, TransferAdmin)
+
+class BannerAdmin(admin.ModelAdmin):
+    """Admin configuration for Banner."""
+    list_display = ('title', 'banner_type', 'status', 'priority', 'is_active', 'created_at')
+    list_filter = ('banner_type', 'status', 'is_active', 'created_at')
+    search_fields = ('title', 'description')
+    readonly_fields = ('created_at', 'updated_at', 'created_by')
+    fieldsets = (
+        ('Banner Information', {
+            'fields': ('title', 'description', 'banner_image')
+        }),
+        ('Display Settings', {
+            'fields': ('banner_type', 'status', 'priority', 'is_active')
+        }),
+        ('Click Action', {
+            'fields': ('click_url',)
+        }),
+        ('Schedule', {
+            'fields': ('display_start_date', 'display_end_date')
+        }),
+        ('Metadata', {
+            'fields': ('created_by', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def save_model(self, request, obj, form, change):
+        if not change:  # Only set created_by on creation
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+
+admin.site.register(Banner, BannerAdmin)
