@@ -36,6 +36,34 @@ if DEBUG:
 ALLOWED_HOSTS = ['localhost', '127.0.0.1', '.ngrok-free.app', 'f570d64ef94e.ngrok-free.app', 'bestyy-server.onrender.com', '.onrender.com', 'bestyy-web.vercel.app']
 print(f"ALLOWED_HOSTS set to: {ALLOWED_HOSTS}")
 
+# ===================================
+# CORS CONFIGURATION (MUST BE EARLY)
+# ===================================
+# Django CORS headers - Configuration MUST come before middleware initialization
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+    'x-cart-token',  # Custom header for JWT-based cart authentication
+]
+
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+
+CORS_ALLOW_CREDENTIALS = True
+
 # Base URL for the application
 BASE_URL = config('BASE_URL', default='https://127.0.0.1:8000')
 # near the top of the file (import
@@ -276,36 +304,14 @@ else:
     ]
     print(f"Using default CORS_ALLOWED_ORIGINS: {CORS_ALLOWED_ORIGINS}")
 
-# CORS allowed headers - Manually specified to ensure x-cart-token is included
-CORS_ALLOW_HEADERS = [
-    'accept',
-    'accept-encoding',
-    'authorization',
-    'content-type',
-    'dnt',
-    'origin',
-    'user-agent',
-    'x-csrftoken',
-    'x-requested-with',
-    'x-cart-token',  # Custom header for JWT-based cart system
-]
-print(f"CORS_ALLOW_HEADERS manually configured: {CORS_ALLOW_HEADERS}")
-
 # CORS expose headers (so frontend can read them from responses)
 CORS_EXPOSE_HEADERS = [
     'x-cart-token',
 ]
 
-# CORS allowed methods
-CORS_ALLOW_METHODS = [
-    'DELETE',
-    'GET',
-    'OPTIONS',
-    'PATCH',
-    'POST',
-    'PUT',
-]
-# Remove duplicate - CORS_ALLOWED_ORIGINS is already defined above
+# Note: CORS_ALLOW_HEADERS, CORS_ALLOW_METHODS, and CORS_ALLOW_CREDENTIALS 
+# are now configured at the TOP of settings.py (lines 42-64) to ensure
+# django-cors-headers loads them before middleware initialization
 
 # JWT Settings
 SIMPLE_JWT = {
