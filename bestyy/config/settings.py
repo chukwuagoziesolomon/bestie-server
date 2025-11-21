@@ -40,6 +40,7 @@ print(f"ALLOWED_HOSTS set to: {ALLOWED_HOSTS}")
 # CORS CONFIGURATION (MUST BE EARLY)
 # ===================================
 # Django CORS headers - Configuration MUST come before middleware initialization
+
 CORS_ALLOW_HEADERS = [
     'accept',
     'accept-encoding',
@@ -63,6 +64,7 @@ CORS_ALLOW_METHODS = [
 ]
 
 CORS_ALLOW_CREDENTIALS = True
+CORS_PREFLIGHT_MAX_AGE = 86400  # 24 hours
 
 # Base URL for the application
 BASE_URL = config('BASE_URL', default='https://127.0.0.1:8000')
@@ -282,7 +284,6 @@ REST_FRAMEWORK = {
 
 # CORS settings
 CORS_ALLOW_ALL_ORIGINS = False
-CORS_ALLOW_CREDENTIALS = True
 
 # CORS allowed origins - Prioritize environment variable
 env_cors_origins = config('CORS_ALLOWED_ORIGINS', default='')
