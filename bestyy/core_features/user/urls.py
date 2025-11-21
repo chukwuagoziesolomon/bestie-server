@@ -86,6 +86,7 @@ urlpatterns = [
     path('vendors/orders/', vendor_orders.VendorOrdersView.as_view(), name='vendor_orders'),
     path('vendors/menu/', vendor_menu_views.VendorMenuListView.as_view(), name='vendor_menu'),
     path('vendors/me/', user_views.UserProfileView.as_view(), name='vendor_me'),
+    path('vendors/profile/images/', vendor_profile_views.VendorImageUpdateView.as_view(), name='vendor_profile_images'),  # Update vendor logo/cover photos
     path('vendors/stock/', vendor_stock_views.VendorStockListView.as_view(), name='vendor_stock'),
     path('vendors/stock/<int:pk>/', vendor_stock_views.VendorStockDetailView.as_view(), name='vendor_stock_detail'),
     path('vendors/stock/<int:item_id>/toggle/', vendor_stock_views.toggle_item_availability, name='vendor_stock_toggle'),

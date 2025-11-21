@@ -362,35 +362,33 @@ class UnifiedVendorRecommendationView(APIView):
                 # Fallback if Cloudinary URL generation fails
                 logo_url = None
 
-        # Get menu items for food images - get all available items
+        # Get ONE random menu item image for restaurant preview
         menu_items = getattr(vendor, 'products', None)
+        random_menu_image = None
         if menu_items is not None:
-            menu_items = menu_items.all()[:10]  # Get up to 10 menu items for better display
-        else:
-            menu_items = []
-        food_images = []
-        for item in menu_items:
-            if item.image:
+            available_items = menu_items.filter(is_available=True, image__isnull=False)
+            if available_items.exists():
+                # Get a random menu item with an image
+                import random
+                random_item = random.choice(list(available_items[:20]))  # Limit to first 20 for performance
                 try:
-                    if hasattr(item.image, 'url'):
-                        image_url = item.image.url
+                    if hasattr(random_item.image, 'url'):
+                        image_url = random_item.image.url
                         if 'cloudinary.com' in image_url:
                             # Transform for web optimization
-                            image_url = image_url.replace('/upload/', '/upload/w_300,h_300,c_fill,f_auto,q_auto/')
+                            image_url = image_url.replace('/upload/', '/upload/w_400,h_300,c_fill,f_auto,q_auto/')
                         else:
                             # For local images, construct full URL
                             image_url = f"{settings.MEDIA_URL}{image_url}"
-                        food_images.append({
-                            'id': item.id,
-                            'dish_name': item.dish_name,
+                        random_menu_image = {
+                            'id': random_item.id,
+                            'dish_name': random_item.dish_name,
                             'image': image_url,
                             'thumbnail': self._get_cloudinary_thumbnail(image_url) if image_url else None,
-                            'price': float(item.price)
-                        })
+                            'price': float(random_item.price)
+                        }
                 except Exception:
-                    continue
-                except Exception:
-                    continue
+                    pass
 
         return {
             'id': vendor.id,
@@ -400,7 +398,7 @@ class UnifiedVendorRecommendationView(APIView):
             'logo': logo_url,
             'cover_image': self._get_cover_image_url(vendor),
             'logo_thumbnail': self._get_cloudinary_thumbnail(logo_url) if logo_url else None,
-            'food_images': food_images,  # Add food images from menu items
+            'preview_image': random_menu_image,  # ONE random menu item image for preview
             'delivery_time': self._estimate_delivery_time(vendor),
             'rating': 0.0,  # No rating system implemented yet
             'total_reviews': 0,  # No review system implemented yet
