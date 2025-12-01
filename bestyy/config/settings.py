@@ -183,13 +183,33 @@ TEMPLATES = [
 WSGI_APPLICATION = 'bestyy.config.wsgi.application'
 ASGI_APPLICATION = 'bestyy.config.asgi.application'
 
-# Database - SQLite for development
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+# Database configuration
+import dj_database_url
+
+# Check if DATABASE_URL is provided (production)
+DATABASE_URL = config('DATABASE_URL', default=None)
+
+if DATABASE_URL:
+    # Production: Use PostgreSQL from DATABASE_URL
+    DATABASES = {
+        'default': dj_database_url.parse(DATABASE_URL)
     }
-}
+    # Add SSL settings for production PostgreSQL
+    DATABASES['default']['OPTIONS'] = {
+        'sslmode': 'require',
+    }
+    # Connection pooling settings for production
+    DATABASES['default']['CONN_MAX_AGE'] = 600
+    print(f"Using PostgreSQL database from DATABASE_URL")
+else:
+    # Development: Use SQLite
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
+    print(f"Using SQLite database for development")
 
 # Password validation - relaxed for user convenience
 AUTH_PASSWORD_VALIDATORS = [
