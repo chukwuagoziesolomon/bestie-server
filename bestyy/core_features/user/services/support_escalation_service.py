@@ -5,7 +5,7 @@ import logging
 from typing import Dict, List, Optional, Tuple
 from django.utils import timezone
 from django.contrib.auth import get_user_model
-from ..models import SupportEscalation, WhatsAppConversation
+from ..models import SupportEscalation
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -25,7 +25,12 @@ class SupportEscalationService:
         'user_request': {'severity': 'low', 'reason': 'User requested human assistance'},
         'high_value_order': {'severity': 'medium', 'reason': 'High-value order assistance'},
         'multiple_vendors': {'severity': 'medium', 'reason': 'Multi-vendor order complexity'},
-        'address_issue': {'severity': 'medium', 'reason': 'Delivery address complications'}
+        'address_issue': {'severity': 'medium', 'reason': 'Delivery address complications'},
+        'complaint_general': {'severity': 'medium', 'reason': 'General complaint requiring follow-up'},
+        'complaint_service': {'severity': 'high', 'reason': 'Service quality complaint'},
+        'complaint_food': {'severity': 'high', 'reason': 'Food quality complaint'},
+        'complaint_delivery': {'severity': 'high', 'reason': 'Delivery issue complaint'},
+        'complaint_payment': {'severity': 'urgent', 'reason': 'Payment-related complaint'},
     }
 
     def __init__(self):
@@ -78,7 +83,7 @@ class SupportEscalationService:
 
         return False
 
-    def create_escalation(self, conversation: WhatsAppConversation, trigger_type: str,
+    def create_escalation(self, conversation, trigger_type: str,
                          context: Dict, assigned_agent: Optional[User] = None) -> SupportEscalation:
         """
         Create a new support escalation
@@ -258,7 +263,7 @@ I'll connect you with one of our support representatives who can better assist y
 
 Please hold while I transfer you."""
 
-    def check_conversation_escalation_history(self, conversation: WhatsAppConversation) -> Dict:
+    def check_conversation_escalation_history(self, conversation) -> Dict:
         """
         Check escalation history for a conversation
         """
@@ -276,8 +281,80 @@ Please hold while I transfer you."""
             'last_escalation': escalations.first().created_at if escalations.exists() else None,
             'unresolved_count': escalations.filter(resolution_status__in=['pending', 'in_progress']).count()
         }
+    
+    def _notify_admin_dashboard(self, escalation: 'SupportEscalation') -> None:
+        """
+        Send notification to admin dashboard about new complaint escalation
+        """
+        try:
+            # Import here to avoid circular imports
+            from bestyy.core_features.user.utils.websocket_notifications import send_admin_notification
+            
+            notification_data = {
+                'type': 'complaint_escalation',
+                'escalation_id': escalation.id,
+                'customer_phone': escalation.customer_phone,
+                'complaint_type': escalation.get_trigger_type_display(),
+                'severity': escalation.severity_level,
+                'description': escalation.description,
+                'created_at': escalation.created_at.isoformat(),
+                'requires_contact': True,
+                'message': f"New {escalation.severity_level} priority complaint from {escalation.customer_phone}"
+            }
+            
+            # Send WebSocket notification to admin dashboard
+            send_admin_notification('complaint_escalation', notification_data)
+            
+            logger.info(f"Admin dashboard notified of escalation {escalation.id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to notify admin dashboard: {str(e)}")
+    
+    def schedule_customer_contact(self, escalation_id: int, contact_method: str = 'whatsapp') -> bool:
+        """
+        Schedule customer contact for an escalation
+        """
+        try:
+            from ..models import SupportEscalation
+            
+            escalation = SupportEscalation.objects.get(id=escalation_id)
+            escalation.resolution_status = 'contact_scheduled'
+            escalation.save()
+            
+            logger.info(f"Customer contact scheduled for escalation {escalation_id} via {contact_method}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to schedule customer contact: {str(e)}")
+            return False
+    
+    def record_contact_attempt(self, escalation_id: int, success: bool, notes: str = '') -> bool:
+        """
+        Record a customer contact attempt
+        """
+        try:
+            from ..models import SupportEscalation
+            
+            escalation = SupportEscalation.objects.get(id=escalation_id)
+            escalation.contact_attempts += 1
+            escalation.last_contact_attempt = timezone.now()
+            
+            if success:
+                escalation.resolution_status = 'contacted'
+            
+            if notes:
+                escalation.resolution_notes = f"{escalation.resolution_notes}\n{timezone.now().strftime('%Y-%m-%d %H:%M')}: {notes}"
+            
+            escalation.save()
+            
+            logger.info(f"Contact attempt recorded for escalation {escalation_id}: success={success}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to record contact attempt: {str(e)}")
+            return False
 
-    def should_prevent_further_escalation(self, conversation: WhatsAppConversation) -> Tuple[bool, str]:
+    def should_prevent_further_escalation(self, conversation) -> Tuple[bool, str]:
         """
         Check if conversation should be prevented from further escalations
         """

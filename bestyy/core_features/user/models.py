@@ -1691,3 +1691,161 @@ class Banner(models.Model):
             return False
         
         return True
+
+
+class SupportEscalation(models.Model):
+    """Model for tracking complaint escalations to admin dashboard"""
+    
+    SEVERITY_CHOICES = [
+        ('low', 'Low Priority'),
+        ('medium', 'Medium Priority'),
+        ('high', 'High Priority'),
+        ('urgent', 'Urgent'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('in_progress', 'In Progress'),
+        ('contact_scheduled', 'Contact Scheduled'),
+        ('contacted', 'Customer Contacted'),
+        ('resolved', 'Resolved'),
+        ('closed', 'Closed'),
+    ]
+    
+    TRIGGER_TYPE_CHOICES = [
+        ('complaint_general', 'General Complaint'),
+        ('complaint_service', 'Service Quality Complaint'),
+        ('complaint_food', 'Food Quality Complaint'),
+        ('complaint_delivery', 'Delivery Issue'),
+        ('complaint_payment', 'Payment Issue'),
+        ('insult_severe', 'Severe Language Violation'),
+        ('insult_multiple', 'Multiple Inappropriate Language'),
+        ('system_error', 'System Technical Error'),
+        ('user_request', 'User Requested Human Assistance'),
+        ('other', 'Other Issue'),
+    ]
+    
+    # Core escalation fields
+    conversation = models.ForeignKey(
+        'whatsapp_ai.WhatsAppConversation',
+        on_delete=models.CASCADE,
+        related_name='escalations'
+    )
+    customer_phone = models.CharField(
+        max_length=20,
+        help_text='Customer WhatsApp phone number'
+    )
+    customer_name = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text='Customer name if available'
+    )
+    
+    # Complaint details
+    trigger_type = models.CharField(
+        max_length=30,
+        choices=TRIGGER_TYPE_CHOICES,
+        default='complaint_general'
+    )
+    description = models.TextField(
+        help_text='Description of the complaint/issue'
+    )
+    severity_level = models.CharField(
+        max_length=10,
+        choices=SEVERITY_CHOICES,
+        default='medium'
+    )
+    
+    # Assignment and resolution
+    assigned_agent = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='assigned_escalations',
+        help_text='Support agent assigned to handle this escalation'
+    )
+    resolution_status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending'
+    )
+    resolution_notes = models.TextField(
+        blank=True,
+        null=True,
+        help_text='Notes about the resolution process'
+    )
+    
+    # Contact tracking
+    contact_attempts = models.PositiveIntegerField(
+        default=0,
+        help_text='Number of times customer contact was attempted'
+    )
+    last_contact_attempt = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='Last time contact was attempted'
+    )
+    contact_successful = models.BooleanField(
+        default=False,
+        help_text='Whether customer was successfully contacted'
+    )
+    
+    # Context and metadata
+    context_data = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Additional context data about the escalation'
+    )
+    escalation_reason = models.CharField(
+        max_length=200,
+        help_text='Reason for escalation'
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='resolved_escalations'
+    )
+    
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Support Escalation'
+        verbose_name_plural = 'Support Escalations'
+    
+    def __str__(self):
+        return f"Escalation #{self.id} - {self.get_trigger_type_display()} ({self.severity_level})"
+    
+    def get_priority_display(self):
+        """Get human-readable priority with emoji"""
+        priority_map = {
+            'low': '🟢 Low Priority',
+            'medium': '🟡 Medium Priority', 
+            'high': '🔴 High Priority',
+            'urgent': '🚨 Urgent'
+        }
+        return priority_map.get(self.severity_level, self.severity_level)
+    
+    def should_contact_customer(self):
+        """Check if customer should be contacted based on severity and status"""
+        return (
+            self.severity_level in ['high', 'urgent'] and
+            self.resolution_status in ['pending', 'in_progress'] and
+            self.contact_attempts < 3
+        )
+    
+    def get_customer_contact_info(self):
+        """Get customer contact information for support agents"""
+        return {
+            'phone': self.customer_phone,
+            'name': self.customer_name or 'Customer',
+            'preferred_method': 'whatsapp',
+            'last_contact': self.last_contact_attempt
+        }

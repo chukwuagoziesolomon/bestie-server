@@ -300,8 +300,8 @@ def _process_meta_message(message, value):
         else:
             print(f"[DEBUG] Found existing conversation with phone: {conversation.phone_number}")
 
-        # Link user if unknown but matches by phone (robustify)
-        if not conversation.user:
+        # Link user if unknown but matches by phone (robustify) - BUT ONLY after proper onboarding
+        if not conversation.user and conversation.onboarding_state == 'onboarded':
             # Try to find user by phone number in different profile models
             user = None
             clean_phone = from_number.replace('+','').replace('-','').replace(' ','')
@@ -946,10 +946,25 @@ How can I help you today?"""
         logger.info(f"🔧 Continuing with rule-based processing (handled_by: {ai_first_result.get('handled_by', 'unknown') if ai_first_result else 'none'})")
 
         # --- SMART INTENT DETECTION (AI-based intent classifier for ALL messages) ---
+        # Block AI for users who haven't completed signup (except verification)
         from .ai_service import WhatsAppAIService, WhatsAppMessage
-        ai_service = WhatsAppAIService()
-        intent_result = ai_service.process_message(whatsapp_message, context={'user_exists': bool(conversation.user)})
-        category = intent_result.get('category', None)
+        category = None
+        
+        if conversation.user or conversation.onboarding_state == 'onboarded':
+            ai_service = WhatsAppAIService()
+            intent_result = ai_service.process_message(whatsapp_message, context={'user_exists': bool(conversation.user)})
+            category = intent_result.get('category', None)
+        else:
+            # Only allow verification intent for non-signed-up users
+            import re
+            if re.match(r'^verify\s+\d{6}$', content.lower().strip()):
+                ai_service = WhatsAppAIService()
+                intent_result = ai_service.process_message(whatsapp_message, context={'user_exists': False})
+                category = intent_result.get('category', None)
+            else:
+                # Force signup for non-verification messages
+                intent_result = {'category': 'needs_signup'}
+                category = 'needs_signup'
 
         # --- Handle verification intent (AI detected) ---
         if category == 'verification':
@@ -1019,18 +1034,33 @@ Your account is now verified. Enjoy the service!
                     reply = payload.get('error', 'Verification failed. Please try again.')
                     meta_service.send_message(to=from_number, message=reply)
                 return
+        
+        # --- Handle needs_signup intent (AI detected non-verified user trying to order) ---
+        if category == 'needs_signup':
+            # Force them to signup first
+            if not conversation.onboarding_state:
+                conversation.onboarding_state = 'awaiting_email'
+                conversation.save()
+            
+            reply = (
+                "I'd love to help you with that! But first, let's get your account set up.\n\n"
+                "Please provide your email address so I can create your Bestyy account. "
+                "If you've used Bestyy before, use the same email address you registered with."
+            )
+            meta_service.send_message(to=from_number, message=reply)
+            return
         # --- continue with food ordering/general fallback ...
 
         # --- CUSTOMER CHATBOT CONVERSATIONAL FLOW (ONBOARDING FSM) ---
         state = conversation.onboarding_state
 
-        # - Not onboarded and no state yet: Check if greeting or ask for email
-        # If user exists but state is not 'onboarded', treat as returning user
+        # - Not onboarded and no state yet: ALWAYS ask for email for new conversations
+        # If user exists but state is not 'onboarded', they still need to complete onboarding
         if user_obj and state != 'onboarded':
-            conversation.onboarding_state = 'onboarded'
-            conversation.save()
-            state = 'onboarded'
-
+            # Don't automatically mark as onboarded - they need to provide email first
+            logger.info(f"User exists but not onboarded: {user_obj.email}")
+            
+        # CRITICAL: Any new WhatsApp conversation without linked user MUST go through signup
         if not user_obj and not state:
             # Check if this is an email first
             import re
@@ -1042,32 +1072,27 @@ Your account is now verified. Enjoy the service!
                 # Continue to process as if we're in awaiting_email state
                 pass  # Fall through to the awaiting_email logic
             else:
-                # Check if this is a greeting
-                greeting_words = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening', 'greetings']
-                if content.lower().strip() in greeting_words or any(word in content.lower() for word in greeting_words):
-                    conversation.onboarding_state = 'awaiting_email'
-                    conversation.save()
-                    reply = (
-                        f"Hello there! 👋 Welcome to Bestyy! We're thrilled to have you here.\n\n"
-                        f"I can see this is a new number for us. To get you all set up and provide you with the best service, "
-                        f"could you please kindly share your email address with us?\n\n"
-                        f"This will help us create your account and ensure seamless communication. "
-                        f"If you've used Bestyy before, please use the same email address you registered with."
-                    )
-                    meta_service.send_message(to=from_number, message=reply)
-                    return
-                else:
-                    # Not a greeting, ask what they need
-                    conversation.onboarding_state = 'awaiting_email'
-                    conversation.save()
-                    reply = (
-                        f"Hello! Welcome to Bestyy! 👋\n\n"
-                        f"I don't recognize this number, so you might be a new user. "
-                        f"To help you get started, could you please provide your email address? "
-                        f"This will allow us to set up your account and serve you better."
-                    )
-                    meta_service.send_message(to=from_number, message=reply)
-                    return
+                # ALWAYS ask for email first - this is critical for proper signup
+                conversation.onboarding_state = 'awaiting_email'
+                conversation.save()
+                # Use exciting welcome greeting
+                from .greeting_service import whatsapp_greeting_service
+                reply = whatsapp_greeting_service.get_welcome_greeting()
+                meta_service.send_message(to=from_number, message=reply)
+                return
+        
+        # Block any food ordering for users without proper signup
+        if not user_obj and state != 'onboarded':
+            # They must complete email signup first
+            if state != 'awaiting_email' and state != 'awaiting_link_confirmation':
+                conversation.onboarding_state = 'awaiting_email'
+                conversation.save()
+                reply = (
+                    f"I'd love to help you order food! But first, let's get your account set up.\n\n"
+                    f"Please provide your email address so I can create your Bestyy account."
+                )
+                meta_service.send_message(to=from_number, message=reply)
+                return
 
         # - Awaiting email: check if email provided, look up, branch for linking if needed
         if state == 'awaiting_email' or (not user_obj and conversation.onboarding_state == 'awaiting_email'):
@@ -1110,9 +1135,9 @@ Your account is now verified. Enjoy the service!
                     conversation.user = existing
                     conversation.onboarding_state = 'onboarded'
                     conversation.save()
-                    reply = (
-                        "Welcome back to Bestyy! You're all set—how can we help you today? 🍔"
-                    )
+                    # Welcome back with personalized greeting
+                    user_name = existing.first_name if existing.first_name else "there"
+                    reply = whatsapp_greeting_service.get_personalized_greeting(user_name, is_returning=True)
                     meta_service.send_message(to=from_number, message=reply)
                     return
                 else:
@@ -1187,14 +1212,17 @@ Your account is now verified. Enjoy the service!
                             except Exception as e:
                                 logger.warning(f"Failed to send welcome email: {str(e)}")
 
-                            # Warm, personalized welcome
+                            # Exciting personalized welcome with celebration
                             first_name = payload['first_name']
+                            celebration_message = whatsapp_greeting_service.get_post_signup_celebration(first_name)
+                            
+                            # Send celebration + account details
+                            account_details = f"\n\n📧 I've sent your account details to your email. You can update your password anytime in settings!"
+                            full_message = celebration_message + account_details
+                            
                             meta_service.send_message(
                                 to=from_number,
-                                message=(
-                                    f"Welcome to Bestyy, {first_name}! 🎉 Your account is ready. "
-                                    "I've sent details to your email."
-                                )
+                                message=full_message
                             )
                             # Continue with onboarding questions immediately
                             onboarding_prompt = (
@@ -1220,8 +1248,10 @@ Your account is now verified. Enjoy the service!
                 # Check if this is a greeting - if so, acknowledge and remind about email
                 greeting_words = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening', 'greetings']
                 if content.lower().strip() in greeting_words or any(word in content.lower() for word in greeting_words):
+                    # Use personalized greeting for email reminder
+                    personalized_greeting = whatsapp_greeting_service.get_personalized_greeting("there")
                     reply = (
-                        f"Hello again! 👋 Nice to hear from you.\n\n"
+                        f"{personalized_greeting}\n\n"
                         f"To continue setting up your Bestyy account, please share your email address with us. "
                         f"This will help us create your account and get you started!"
                     )
@@ -1298,9 +1328,11 @@ Your account is now verified. Enjoy the service!
                         recipient_list=[email],
                         fail_silently=False
                     )
-                    reply = (
-                        f"✅ Linked! Your WhatsApp number is now connected to {email}. You're all set.\n\nWhat would you like to eat today?"
-                    )
+                    # Get user's name for personalized greeting
+                    user_name = existing.first_name if existing.first_name else "there"
+                    personalized_greeting = whatsapp_greeting_service.get_personalized_greeting(user_name, is_returning=True)
+                    
+                    reply = f"✅ Linked! Your WhatsApp number is now connected to {email}.\n\n{personalized_greeting}"
                     meta_service.send_message(to=from_number, message=reply)
                     return
             else:
@@ -1469,6 +1501,20 @@ Your account is now verified. Enjoy the service!
                     except Exception as e:
                         logger.error(f"Error processing awaited delivery address: {str(e)}")
 
+            # PRIORITY 3.5: Check if we're awaiting customizations
+            if conversation.context_data.get('awaiting_customizations'):
+                # Skip obvious commands or very short responses
+                skip_words = ['yes', 'no', 'done', 'more', 'cancel', 'help', 'menu', 'paid', 'status']
+                if content_lower not in skip_words:
+                    try:
+                        logger.info(f"Processing message as customizations because awaiting_customizations=True: '{content}'")
+                        customization_message = _process_dish_customizations(content, from_number, meta_service, user_obj, conversation)
+                        if customization_message:
+                            meta_service.send_message(to=from_number, message=customization_message)
+                            return
+                    except Exception as e:
+                        logger.error(f"Error processing dish customizations: {str(e)}")
+
             # PRIORITY 4: Check for delivery address responses (any message that looks like an address)
             from .utils import looks_like_address
             if looks_like_address(content):
@@ -1519,6 +1565,16 @@ Your account is now verified. Enjoy the service!
                         return
                 except Exception as e:
                     logger.error(f"Error processing order confirmation: {str(e)}")
+
+            # PRIORITY 5.1: Check for menu option selection (2, 3, 4) when pending dish exists
+            if conversation.context_data.get('pending_dish') and content_lower in ['2', '3', '4']:
+                try:
+                    menu_option_message = _handle_menu_option_selection(content_lower, from_number, meta_service, user_obj, conversation)
+                    if menu_option_message:
+                        meta_service.send_message(to=from_number, message=menu_option_message)
+                        return
+                except Exception as e:
+                    logger.error(f"Error handling menu option selection: {str(e)}")
 
             # PRIORITY 3: Check for ordering intents from current menu context
             ordering_intent = _detect_menu_ordering_intent(content)
@@ -1602,26 +1658,33 @@ Your account is now verified. Enjoy the service!
                 except Exception as e:
                     logger.error(f"Recommendation assist failed: {str(e)}")
 
-            # For non-food ordering messages, use normal AI service
-            try:
-                ai_service = WhatsAppAIService()
-                ai_response = ai_service.process_message(whatsapp_message, context={'user_exists': True})
-                if ai_response.get('success'):
-                    meta_service.send_message(
-                        to=from_number,
-                        message=ai_response['response']
-                    )
-                else:
-                    # AI service failed, send helpful fallback message based on message content
-                    logger.error(f"AI service failed for user {user_obj}: {ai_response.get('error', 'Unknown error')}")
+            # For non-food ordering messages, use normal AI service (only for properly onboarded users)
+            if user_obj and conversation.onboarding_state == 'onboarded':
+                try:
+                    ai_service = WhatsAppAIService()
+                    ai_response = ai_service.process_message(whatsapp_message, context={'user_exists': True})
+                    if ai_response.get('success'):
+                        meta_service.send_message(
+                            to=from_number,
+                            message=ai_response['response']
+                        )
+                    else:
+                        # AI service failed, send helpful fallback message based on message content
+                        logger.error(f"AI service failed for user {user_obj}: {ai_response.get('error', 'Unknown error')}")
 
-                    # Provide contextual fallback responses
+                        # Provide contextual fallback responses
+                        fallback_message = _get_contextual_fallback_message(content)
+                        meta_service.send_message(to=from_number, message=fallback_message)
+                except Exception as e:
+                    logger.error(f"Error processing message for onboarded user {user_obj}: {str(e)}")
                     fallback_message = _get_contextual_fallback_message(content)
                     meta_service.send_message(to=from_number, message=fallback_message)
-            except Exception as e:
-                logger.error(f"Error processing message for onboarded user {user_obj}: {str(e)}")
-                fallback_message = _get_contextual_fallback_message(content)
-                meta_service.send_message(to=from_number, message=fallback_message)
+            else:
+                # User needs to complete signup first
+                meta_service.send_message(
+                    to=from_number,
+                    message="I'd love to help! But first, let's get your account set up. Please provide your email address so I can create your Bestyy account."
+                )
             return
 
         # Unexpected fallback
@@ -1633,22 +1696,34 @@ Your account is now verified. Enjoy the service!
         logger.error(f"Error processing message: {str(e)}")
         try:
             # Provide contextual fallback response even for general errors
-            # Check for specific food types and provide restaurant recommendations
-            food_keywords = ['pizza', 'burger', 'chicken', 'rice', 'pasta', 'soup', 'salad', 'sandwich', 'noodles', 'sushi', 'steak', 'fish', 'beef', 'pork', 'vegetarian', 'vegan']
-            for food in food_keywords:
-                if food in content.lower():
-                    error_message = _get_food_restaurants_text(food)
-                    break
-            else:
-                # No specific food type found, use generic responses
-                if 'order' in content.lower():
-                    error_message = "I'd be happy to help you place an order! Could you please tell me what you'd like to order?"
-                elif 'menu' in content.lower() or 'food' in content.lower():
-                    error_message = "I can help you with our menu! What type of food are you interested in?"
-                elif any(word in content.lower() for word in ['hello', 'hi', 'hey']):
-                    error_message = "Hello! Welcome to Bestyy! How can I assist you today?"
+            # Use AI-powered message categorization instead of rule-based keyword matching
+            from bestyy.communication.whatsapp.ai_message_categorizer import WhatsAppMessageCategorizer
+            categorizer = WhatsAppMessageCategorizer()
+            
+            # Build user context for better categorization
+            user_context = {
+                'first_name': conversation.user.first_name if conversation.user else None,
+                'onboarding_state': conversation.onboarding_state,
+                'phone_number': from_number
+            }
+            
+            # Get AI categorization
+            categorization = categorizer.categorize_message(content, user_context)
+            
+            # Handle specific food search category differently for restaurant recommendations
+            if categorization['category'] == 'food_search':
+                # Check for specific food types and provide restaurant recommendations
+                food_keywords = ['pizza', 'burger', 'chicken', 'rice', 'pasta', 'soup', 'salad', 'sandwich', 'noodles', 'sushi', 'steak', 'fish', 'beef', 'pork', 'vegetarian', 'vegan']
+                for food in food_keywords:
+                    if food in content.lower():
+                        error_message = _get_food_restaurants_text(food)
+                        break
                 else:
-                    error_message = "Thanks for your message! I'm here to help with food delivery and orders. What can I do for you?"
+                    # No specific food found, use generic food search response
+                    error_message = categorizer.get_response_for_category('food_search', user_context, content)
+            else:
+                # Use AI-generated response for the category
+                error_message = categorizer.get_response_for_category(categorization['category'], user_context, content)
 
             meta_service.send_message(to=from_number, message=error_message)
         except Exception:
@@ -2362,6 +2437,123 @@ def _process_order_confirmation(phone_number, meta_service, user=None):
     except Exception as e:
         logger.error(f"Error processing order confirmation: {str(e)}")
         return "Sorry, there was an error processing your order. Please try again or contact support."
+
+
+def _handle_menu_option_selection(option, phone_number, meta_service, user, conversation):
+    """Handle menu option selection (2, 3, 4) when user has a pending dish"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        if not conversation.context_data.get('pending_dish'):
+            return "Sorry, I don't have any pending dish selection. Please select a dish first."
+        
+        pending = conversation.context_data['pending_dish']
+        dish_name = pending.get('dish_name', 'your dish')
+        vendor_name = pending.get('vendor_name', 'the restaurant')
+        
+        if option == '2':  # Add customizations
+            # For now, we'll offer to add special instructions
+            message = f"🍽️ *{dish_name}* from *{vendor_name}*\n\n"
+            message += f"📝 Please tell me any customizations or special instructions:\n\n"
+            message += f"💡 Examples:\n"
+            message += f"• 'Extra spicy'\n"
+            message += f"• 'No onions'\n"
+            message += f"• 'Medium sized'\n"
+            message += f"• 'Add extra meat'\n\n"
+            message += f"Or reply 'no customizations' to proceed without any."
+            
+            # Set a flag to indicate we're waiting for customizations
+            conversation.context_data['awaiting_customizations'] = True
+            conversation.save()
+            
+            return message
+            
+        elif option == '3':  # Choose different dish
+            # Clear the current pending dish and ask what they want instead
+            conversation.context_data.pop('pending_dish', None)
+            conversation.save()
+            
+            message = f"🔄 No problem! Let's find you something different.\n\n"
+            message += f"🍽️ What would you like to order instead?\n\n"
+            message += f"💬 Just tell me:\n"
+            message += f"• The dish name (e.g., 'jollof rice', 'pizza', 'burger')\n"
+            message += f"• Or browse by saying 'show me rice dishes' or 'what burgers do you have?'\n\n"
+            message += f"I'm here to help! 😊"
+            
+            return message
+            
+        elif option == '4':  # Cancel
+            # Clear the pending dish and offer to help with something else
+            conversation.context_data.pop('pending_dish', None)
+            conversation.save()
+            
+            message = f"❌ Order cancelled. No worries!\n\n"
+            message += f"🍽️ Would you like to:\n\n"
+            message += f"• Order something else?\n"
+            message += f"• Browse our restaurants?\n"
+            message += f"• Get food recommendations?\n\n"
+            message += f"Just let me know what you'd like! 😊"
+            
+            return message
+            
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error handling menu option selection: {str(e)}")
+        return "Sorry, there was an error processing your selection. Please try again."
+
+
+def _process_dish_customizations(customizations, phone_number, meta_service, user, conversation):
+    """Process dish customizations and proceed to order confirmation"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        if not conversation.context_data.get('pending_dish'):
+            return "Sorry, I don't have any pending dish selection. Please select a dish first."
+        
+        pending = conversation.context_data['pending_dish']
+        dish_name = pending.get('dish_name', 'your dish')
+        vendor_name = pending.get('vendor_name', 'the restaurant')
+        
+        # Clear the awaiting customizations flag
+        conversation.context_data.pop('awaiting_customizations', None)
+        
+        customizations_lower = customizations.lower().strip()
+        
+        # Check if user declined customizations
+        if customizations_lower in ['no customizations', 'no', 'none', 'nothing', 'skip', 'no thanks']:
+            message = f"✅ Perfect! No customizations needed.\n\n"
+        else:
+            # Store customizations in the pending dish
+            pending['customizations'] = customizations
+            conversation.context_data['pending_dish'] = pending
+            message = f"✅ Great! I've noted your customizations:\n"
+            message += f"📝 *{customizations}*\n\n"
+        
+        # Now show the order confirmation with customizations
+        price = pending.get('price', 0)
+        message += f"🍽️ *Order Summary:*\n"
+        message += f"🏪 Restaurant: {vendor_name}\n"
+        message += f"🍽️ Dish: {dish_name}\n"
+        if pending.get('customizations'):
+            message += f"📝 Customizations: {pending['customizations']}\n"
+        message += f"💰 Price: ₦{float(price):,.0f}\n\n"
+        
+        message += f"Would you like to:\n"
+        message += f"1. ✅ Confirm order\n"
+        message += f"2. ➕ Add more customizations\n"
+        message += f"3. 🔄 Choose different dish\n"
+        message += f"4. ❌ Cancel\n\n"
+        message += f"Reply with the number or just say 'confirm'!"
+        
+        conversation.save()
+        return message
+        
+    except Exception as e:
+        logger.error(f"Error processing dish customizations: {str(e)}")
+        return "Sorry, there was an error processing your customizations. Please try again."
 
 
 def _handle_vendor_order_response(content, phone_number, meta_service, user, vendor_profile):
@@ -3409,8 +3601,8 @@ def _get_vendor_menu_by_selection(selection_number, phone_number, meta_service):
                         if menu_data.get('success') and menu_data.get('menu_items'):
                             menu_items = menu_data['menu_items'][:6]  # Show up to 6 items for better UX
 
-                            # Send welcome message first
-                            welcome_msg = f"🍽️ Welcome to {vendor_name}!\n\nHere are our featured dishes:"
+                            # Send welcome message first with excitement
+                            welcome_msg = f"🍽️✨ Welcome to {vendor_name}! ✨\n\nHere are our mouth-watering featured dishes:"
                             meta_service.send_message(to=phone_number, message=welcome_msg)
 
                             # Send each menu item as a rich image + details
@@ -3622,21 +3814,22 @@ def _extract_vendor_and_dish(content: str):
 
 
 def _get_contextual_fallback_message(content):
-    """Get contextual fallback message based on content - BACKEND DATA ONLY"""
-    content_lower = content.lower()
-
-    # Check for specific food types and provide restaurant recommendations
-    food_keywords = ['pizza', 'burger', 'chicken', 'rice', 'pasta', 'soup', 'salad', 'sandwich', 'noodles', 'sushi', 'steak', 'fish', 'beef', 'pork', 'vegetarian', 'vegan']
-    for food in food_keywords:
-        if food in content_lower:
-            return _get_food_restaurants_text(food)
-
-    # Generic responses based on content
-    if 'order' in content_lower:
-        return "I'd be happy to help you place an order! Could you please tell me what you'd like to order from our menu?"
-    elif 'menu' in content_lower or 'food' in content.lower():
-        return "I can help you with our menu! We have a variety of delicious options. What type of food are you interested in?"
-    elif any(word in content_lower for word in ['hello', 'hi', 'hey']):
-        return "Hello! Welcome to Bestyy! How can I assist you today?"
+    """Get contextual fallback message using AI categorization - BACKEND DATA ONLY"""
+    from bestyy.communication.whatsapp.ai_message_categorizer import WhatsAppMessageCategorizer
+    categorizer = WhatsAppMessageCategorizer()
+    
+    # Get AI categorization (no user context available in this fallback)
+    categorization = categorizer.categorize_message(content, None)
+    
+    # Handle specific food search category differently for restaurant recommendations
+    if categorization['category'] == 'food_search':
+        content_lower = content.lower()
+        food_keywords = ['pizza', 'burger', 'chicken', 'rice', 'pasta', 'soup', 'salad', 'sandwich', 'noodles', 'sushi', 'steak', 'fish', 'beef', 'pork', 'vegetarian', 'vegan']
+        for food in food_keywords:
+            if food in content_lower:
+                return _get_food_restaurants_text(food)
+        # No specific food found, use generic food search response
+        return categorizer.get_response_for_category('food_search', None, content)
     else:
-        return "Thanks for your message! I'm here to help you with food delivery, orders, or any questions you might have. What can I do for you?"
+        # Use AI-generated response for the category
+        return categorizer.get_response_for_category(categorization['category'], None, content)

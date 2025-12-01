@@ -10,7 +10,8 @@ from .api import (
     admin_user_management, banner_views, unified_recommendation_view,
     unified_search_view, smart_recommendations, vendor_menu_views, vendor_transactions,
     vendor_profile_views, location_services, order_summary, google_places_proxy,
-    paystack_pwt_views, test_payment_views, website_cart_views, vendor_autocomplete_views
+    paystack_pwt_views, test_payment_views, website_cart_views, vendor_autocomplete_views,
+    admin_support_views
 )
 from .api.user_subscription_views import (
     verify_subscription_payment, user_subscription_status,
@@ -130,6 +131,15 @@ urlpatterns = [
     path('admin/orders/<int:pk>/', admin_order_views.AdminOrderListView.as_view(), name='admin_order_detail'),
     path('admin/users/', admin_user_management.SuspendedUsersListView.as_view(), name='admin_users'),
     path('admin/featured-vendors/', featured_vendor_admin.FeaturedVendorListView.as_view(), name='admin_featured_vendors'),
+    
+    # Support escalation management
+    path('admin/support-escalations/', admin_support_views.get_support_escalations, name='admin_support_escalations'),
+    path('admin/support-escalations/<int:escalation_id>/', admin_support_views.get_escalation_details, name='admin_escalation_details'),
+    path('admin/support-escalations/<int:escalation_id>/assign/', admin_support_views.assign_escalation_agent, name='admin_assign_escalation'),
+    path('admin/support-escalations/<int:escalation_id>/schedule-contact/', admin_support_views.schedule_customer_contact, name='admin_schedule_contact'),
+    path('admin/support-escalations/<int:escalation_id>/record-contact/', admin_support_views.record_contact_attempt, name='admin_record_contact'),
+    path('admin/support-escalations/<int:escalation_id>/resolve/', admin_support_views.resolve_escalation, name='admin_resolve_escalation'),
+    path('admin/support-agents/', admin_support_views.get_support_agents, name='admin_support_agents'),
 
     # Banners
     path('banners/', banner_views.BannerListView.as_view(), name='banners'),

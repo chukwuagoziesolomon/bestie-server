@@ -69,6 +69,18 @@ class AIFirstMessageProcessor:
         }
         """
         try:
+            # CRITICAL: Block AI processing if user hasn't completed signup
+            conversation = context.get('conversation')
+            if conversation and not context.get('user_exists') and conversation.onboarding_state != 'onboarded':
+                logger.info("AI-first blocked: User must complete signup first")
+                return {
+                    'response': None,  # Let caller handle signup flow
+                    'handled_by': 'signup_required',
+                    'bypass_reason': 'needs_signup',
+                    'confidence': 1.0,
+                    'metadata': {'signup_required': True}
+                }
+            
             # Step 1: Check if should bypass AI
             should_bypass, bypass_reason = self.should_bypass_ai(content, context)
             
@@ -164,14 +176,12 @@ class AIFirstMessageProcessor:
                 ai_result.get('confidence', 0.0)
             )
             
-            # Step 9: Add spell correction notice if applicable
+            # Step 9: Log spell correction for debugging (don't send to user)
             if preprocessing_meta.get('was_spell_corrected'):
                 corrections = preprocessing_meta.get('corrections', [])
                 if corrections:
-                    correction_note = f"\n\n_📝 Note: I understood you meant '{processed_content}'_"
-                    # Only add note for significant corrections
-                    if len(corrections) > 0 and ai_result.get('confidence', 0) < 0.9:
-                        response_text += correction_note
+                    logger.info(f"Spell correction applied: '{content}' → '{processed_content}' (corrections: {corrections})")
+                    # Note: Don't add correction note to user response - keep it internal
             
             return {
                 'response': response_text,

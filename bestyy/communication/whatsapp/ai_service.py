@@ -48,6 +48,35 @@ class WhatsAppAIService:
         try:
             # Determine message category
             category = self._categorize_message(message.content)
+            
+            # Check if user is in complaint conversation state (even if current message isn't a complaint)
+            from .complaint_handler import WhatsAppComplaintHandler
+            complaint_handler = WhatsAppComplaintHandler()
+            phone_number = message.conversation.phone_number
+            
+            # Check if user is expecting category selection or other complaint follow-up
+            if (phone_number and 
+                complaint_handler.state_manager.is_expecting_category_selection(phone_number)):
+                logger.info(f"User {phone_number} is in complaint selection state, checking if this is a category response")
+                
+                # Build user context for complaint handler
+                user_context = {
+                    'phone_number': phone_number,
+                    'first_name': message.conversation.user.first_name if message.conversation.user else None
+                }
+                
+                # Check if this message is a complaint category response
+                if complaint_handler._is_problem_category_response(message.content):
+                    logger.info(f"Message '{message.content}' is a complaint category response")
+                    complaint_result = complaint_handler.handle_complaint(message.content, user_context)
+                    
+                    return {
+                        'response': complaint_result['response'],
+                        'category': 'complaint_followup',
+                        'confidence': 0.95,
+                        'processing_time': time.time() - start_time,
+                        'handled_by': 'complaint_handler'
+                    }
 
             # Check if user needs onboarding (only for new users who haven't completed onboarding)
             user_exists = context.get('user_exists', False) if context else False
@@ -197,6 +226,26 @@ class WhatsAppAIService:
                         'response': "Sorry, no more restaurants available for this dish.",
                         'confidence': 0.95
                     }
+            # Check for complaint handling first
+            elif category == 'complaint_detected':
+                logger.info(f"Complaint detected, using complaint handler")
+                from .complaint_handler import WhatsAppComplaintHandler
+                
+                # Build user context for complaint handler
+                user_context = {
+                    'phone_number': message.conversation.phone_number,
+                    'first_name': message.conversation.user.first_name if message.conversation.user else None
+                }
+                
+                # Use complaint handler directly for better state management
+                complaint_handler = WhatsAppComplaintHandler()
+                complaint_result = complaint_handler.handle_complaint(message.content, user_context)
+                
+                ai_response = {
+                    'response': complaint_result['response'],
+                    'confidence': 0.95
+                }
+
             # Check for onboarding flow first
             elif category in ['new_user_onboarding', 'onboarding_start', 'terms_accepted', 'onboarding_skip', 'food_category_selection']:
                 logger.info(f"Onboarding category detected: {category}")
@@ -377,8 +426,31 @@ class WhatsAppAIService:
             Category string
         """
         from .nigerian_dishes_kb import find_nigerian_dish
+        from .ai_message_categorizer import WhatsAppMessageCategorizer
 
         content_lower = content.lower().strip()
+        
+        # Check for complaints early using our intelligent categorizer
+        categorizer = WhatsAppMessageCategorizer()
+        initial_categorization = categorizer.categorize_message(content, None)
+        
+        # If it's a complaint, return special complaint category to trigger complaint handler
+        if initial_categorization['category'] == 'complaint':
+            return 'complaint_detected'
+            
+        # Also check if user might be responding to complaint category selection
+        # Import here to avoid circular imports
+        from .simple_state_manager import SimpleConversationStateManager
+        from .complaint_handler import WhatsAppComplaintHandler
+        
+        # Try to get phone number from current conversation context
+        phone_number = None
+        try:
+            # This is tricky because we only have content, not the full message context
+            # We'll handle this in the main process_message method instead
+            pass
+        except:
+            pass
 
         # --- More robust WhatsApp verification/OTP/authorization code detection (early priority) ---
         import re
@@ -608,67 +680,30 @@ class WhatsAppAIService:
 
     def _fallback_categorize(self, content: str) -> str:
         """
-        Fallback categorization using keyword matching when LLM fails
-        This is used when OpenRouter API returns errors (e.g., moderation flags)
+        Enhanced fallback categorization using AI categorization when LLM fails
+        This provides much more intelligent categorization than keyword matching
         """
-        content_lower = content.lower()
-
-        # Nigerian food keywords
-        nigerian_foods = ['eba', 'jollof', 'egusi', 'pounded yam', 'efo riro', 'afang',
-                         'okra', 'moi moi', 'akara', 'suya', 'kilishi', 'fufu', 'semovita',
-                         'amala', 'pepper soup', 'goat meat', 'beef', 'chicken soup']
-
-        # Order-related keywords
-        order_keywords = ['order', 'want', 'need', 'get', 'buy', 'send', 'deliver', 'i want']
-
-        # Extras keywords
-        extras_keywords = ['extra', 'with', 'no', 'without', 'add', 'remove', 'spicy', 'mild']
-
-        # Greeting keywords
-        greeting_keywords = ['hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening', 'greetings']
-
-        # Check for greetings
-        if any(greeting in content_lower for greeting in greeting_keywords):
-            return 'greeting'
-
-        # Check for Nigerian food requests
-        if any(food in content_lower for food in nigerian_foods):
-            if any(order_kw in content_lower for order_kw in order_keywords):
-                # Check if it has extras
-                if any(extra in content_lower for extra in extras_keywords):
-                    return 'food_order_with_extras'
-                return 'nigerian_food_request'
-            return 'nigerian_food_request'
-
-        # Check for general food requests with extras
-        if any(order_kw in content_lower for order_kw in order_keywords):
-            if any(extra in content_lower for extra in extras_keywords):
-                return 'food_order_with_extras'
-            # Check for specific food types
-            food_types = ['pizza', 'burger', 'chicken', 'rice', 'pasta', 'soup', 'salad',
-                         'sandwich', 'noodles', 'sushi', 'steak', 'fish', 'shawarma']
-            if any(food in content_lower for food in food_types):
-                return 'specific_food_request'
-            return 'order_inquiry'
-
-        # Check for delivery status
-        if any(word in content_lower for word in ['where', 'status', 'track', 'delivery', 'arrived', 'coming']):
-            return 'delivery_status'
-
-        # Check for payment help
-        if any(word in content_lower for word in ['payment', 'pay', 'card', 'transfer', 'price', 'cost']):
-            return 'payment_help'
-
-        # Check for complaints
-        if any(word in content_lower for word in ['problem', 'issue', 'wrong', 'bad', 'late', 'complaint', 'angry', 'upset']):
-            return 'complaint'
-
-        # Check for menu request
-        if any(word in content_lower for word in ['menu', 'what do you have', 'what can i order', 'options']):
-            return 'menu_request'
-
-        # Default to general_info
-        return 'general_info'
+        from .ai_message_categorizer import WhatsAppMessageCategorizer
+        categorizer = WhatsAppMessageCategorizer()
+        
+        # Use our advanced AI categorization system as fallback
+        categorization = categorizer.categorize_message(content, None)
+        
+        # Map our categorizer categories to AI service categories
+        category_mapping = {
+            'greeting': 'greeting',
+            'food_order': 'nigerian_food_request',
+            'food_search': 'nigerian_food_request',
+            'menu_inquiry': 'food_recommendation',
+            'delivery_inquiry': 'general_question',
+            'payment_help': 'general_question',
+            'complaint': 'general_question',
+            'account_help': 'general_question',
+            'general_question': 'general_question',
+            'unclear': 'general_question'
+        }
+        
+        return category_mapping.get(categorization['category'], 'general_question')
 
 
     def _get_template(self, category: str, language: str = 'en') -> Optional[AIResponseTemplate]:
@@ -713,20 +748,49 @@ class WhatsAppAIService:
         Returns:
             Dict containing response and metadata
         """
-        # If no template configured in DB, provide a safe fallback message
+        # If no template configured in DB, use AI categorization for better response
         if template is None:
-            fallback_text = "I'd be happy to help you place an order! Could you please tell me what you'd like to order from our menu?"
+            from .ai_message_categorizer import WhatsAppMessageCategorizer
+            categorizer = WhatsAppMessageCategorizer()
+            
+            # Get user context from the message/context if available
+            user_context = {}
+            if hasattr(message, 'conversation') and message.conversation.user:
+                user_context = {
+                    'first_name': message.conversation.user.first_name,
+                    'onboarding_state': message.conversation.onboarding_state,
+                }
+            
+            # Use AI categorization for intelligent fallback
+            categorization = categorizer.categorize_message(message.content, user_context)
+            fallback_text = categorizer.get_response_for_category(categorization['category'], user_context, message.content)
+            
             return {
                 'response': fallback_text,
-                'confidence': 0.5,
+                'confidence': categorization.get('confidence', 0.7),
                 'tokens_used': 0,
             }
 
         if not self.openrouter_api_key:
-            # If no API key, still return a graceful fallback
+            # If no API key, use AI categorization for intelligent fallback
+            from .ai_message_categorizer import WhatsAppMessageCategorizer
+            categorizer = WhatsAppMessageCategorizer()
+            
+            # Get user context from the message/context if available
+            user_context = {}
+            if hasattr(message, 'conversation') and message.conversation.user:
+                user_context = {
+                    'first_name': message.conversation.user.first_name,
+                    'onboarding_state': message.conversation.onboarding_state,
+                }
+            
+            # Use AI categorization for intelligent fallback
+            categorization = categorizer.categorize_message(message.content, user_context)
+            fallback_text = categorizer.get_response_for_category(categorization['category'], user_context, message.content)
+            
             return {
-                'response': "Thanks! Tell me what you'd like to eat, and I'll show options.",
-                'confidence': 0.5,
+                'response': fallback_text,
+                'confidence': categorization.get('confidence', 0.7),
                 'tokens_used': 0,
             }
         
@@ -1887,40 +1951,45 @@ class WhatsAppAIService:
                 logger.warning(f"Order {order.id} has no order_items, using fallback calculation")
 
             # Prepare payload for OrderSummaryView API
-            summary_payload = {
-                'cart_items': cart_items,
-                'delivery_address': order.delivery_address,
-                'vendor_id': order.vendor.id
-            }
+            # Use JWT cart service for order summary
+            from .direct_whatsapp_cart_service import DirectWhatsAppCartService
+            cart_service = DirectWhatsAppCartService()
+            
+            # Get conversation from context
+            conversation = context.get('conversation')
+            if not conversation:
+                logger.error("No conversation context for order summary")
+                return {
+                    'message': "Sorry, there was an issue processing your order. Please try again.",
+                    'action': 'error'
+                }
+            
+            # Get order summary using JWT cart
+            summary_data = cart_service.get_order_summary_for_whatsapp(
+                conversation=conversation,
+                delivery_address=order.delivery_address,
+                vendor_id=order.vendor.id if order.vendor else None
+            )
 
-            # Call OrderSummaryView API
-            base_url = getattr(settings, 'BASE_URL', 'http://127.0.0.1:8000')
-            api_url = f"{base_url}/api/user/order-summary/"
+            if summary_data.get('success'):
+                summary = summary_data.get('summary', {})
+                delivery_info = summary_data.get('delivery_info', {})
+                items = summary_data.get('items', [])
 
-            response = requests.post(api_url, json=summary_payload, timeout=10)
+                # Update order with calculated fees
+                order.subtotal = Decimal(str(summary.get('subtotal', 0)))
+                order.delivery_fee = Decimal(str(summary.get('delivery_fee', 0)))
+                order.total_amount = Decimal(str(summary.get('grand_total', 0)))
+                order.save()
 
-            if response.status_code == 200:
-                summary_data = response.json()
+                # Format order summary message for user confirmation
+                message = f"📋 *Order Summary - Please Confirm*\n\n"
+                message += f"🏪 *Restaurant:* {delivery_info.get('vendor', {}).get('name', order.vendor.business_name)}\n\n"
 
-                if summary_data.get('success'):
-                    summary = summary_data.get('summary', {})
-                    delivery_info = summary_data.get('delivery_info', {})
-                    items = summary_data.get('items', [])
-
-                    # Update order with calculated fees
-                    order.subtotal = Decimal(str(summary.get('subtotal', 0)))
-                    order.delivery_fee = Decimal(str(summary.get('delivery_fee', 0)))
-                    order.total_amount = Decimal(str(summary.get('grand_total', 0)))
-                    order.save()
-
-                    # Format order summary message for user confirmation
-                    message = f"📋 *Order Summary - Please Confirm*\n\n"
-                    message += f"🏪 *Restaurant:* {delivery_info.get('vendor', {}).get('name', order.vendor.business_name)}\n\n"
-
-                    # List items
-                    message += f"🍽️ *Items:*\n"
-                    for item in items:
-                        message += f"• {item.get('name', 'Item')} x{item.get('quantity', 1)} = ₦{item.get('total', 0):,.0f}\n"
+                # List items
+                message += f"🍽️ *Items:*\n"
+                for item in items:
+                    message += f"• {item.get('name', 'Item')} x{item.get('quantity', 1)} = ₦{item.get('total', 0):,.0f}\n"
 
                     # Pricing breakdown
                     message += f"\n💰 *Pricing:*\n"
