@@ -1097,9 +1097,11 @@ Your account is now verified. Enjoy the service!
         # - Awaiting email: check if email provided, look up, branch for linking if needed
         if state == 'awaiting_email' or (not user_obj and conversation.onboarding_state == 'awaiting_email'):
             import re
-            email_match = re.match(r"[^@\s]+@[^@\s]+\.[^@\s]+", content)
+            # Improved email extraction: search anywhere in the message and extract just the email
+            email_pattern = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
+            email_match = re.search(email_pattern, content)
             if email_match:
-                email = content
+                email = email_match.group()  # Extract only the email part
                 existing = User.objects.filter(email=email).first()
                 if existing:
                     # Determine if this WhatsApp number is already linked to any of the user's profiles
@@ -1130,16 +1132,16 @@ Your account is now verified. Enjoy the service!
                         )
                         meta_service.send_message(to=from_number, message=reply)
                         return
-                elif existing:
-                    # Same email/phone: just welcome back
-                    conversation.user = existing
-                    conversation.onboarding_state = 'onboarded'
-                    conversation.save()
-                    # Welcome back with personalized greeting
-                    user_name = existing.first_name if existing.first_name else "there"
-                    reply = whatsapp_greeting_service.get_personalized_greeting(user_name, is_returning=True)
-                    meta_service.send_message(to=from_number, message=reply)
-                    return
+                    else:
+                        # Same email/phone: just welcome back
+                        conversation.user = existing
+                        conversation.onboarding_state = 'onboarded'
+                        conversation.save()
+                        # Welcome back with personalized greeting
+                        user_name = existing.first_name if existing.first_name else "there"
+                        reply = whatsapp_greeting_service.get_personalized_greeting(user_name, is_returning=True)
+                        meta_service.send_message(to=from_number, message=reply)
+                        return
                 else:
                     # New user: call multi-role registration endpoint to create as 'user'
                     import secrets
