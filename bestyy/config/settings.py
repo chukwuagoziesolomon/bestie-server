@@ -117,6 +117,7 @@ THIRD_PARTY_APPS = [
     'rest_framework',
     'rest_framework.authtoken',
     'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',  # Required for token blacklist/rotation
     'corsheaders',
     'channels',
     'cloudinary',
@@ -343,8 +344,8 @@ CORS_EXPOSE_HEADERS = [
 
 # JWT Settings
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=1),  # Changed from 1 hour to 24 hours
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=30),  # Changed from 7 days to 30 days
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'UPDATE_LAST_LOGIN': True,

@@ -162,13 +162,12 @@ class VendorMenuItemsView(APIView):
         """Get vendor logo URL"""
         if vendor.logo:
             try:
-                if hasattr(vendor.logo, 'url'):
-                    logo_url = vendor.logo.url
-                    if 'cloudinary.com' in logo_url:
-                        logo_url = logo_url.replace('/upload/', '/upload/w_200,h_200,c_fill,f_auto,q_auto/')
-                    else:
-                        logo_url = f"{settings.MEDIA_URL}{logo_url}"
-                    return logo_url
+                # Since logo is now URLField (string), handle it directly
+                logo_url = vendor.logo
+                if isinstance(logo_url, str) and 'cloudinary.com' in logo_url:
+                    # Add Cloudinary transformations for optimized display
+                    logo_url = logo_url.replace('/upload/', '/upload/w_200,h_200,c_fill,f_auto,q_auto/')
+                return logo_url
             except Exception:
                 pass
         return None
@@ -177,13 +176,12 @@ class VendorMenuItemsView(APIView):
         """Get vendor cover image URL"""
         if hasattr(vendor, 'cover_image') and vendor.cover_image:
             try:
-                if hasattr(vendor.cover_image, 'url'):
-                    cover_url = vendor.cover_image.url
-                    if 'cloudinary.com' in cover_url:
-                        cover_url = cover_url.replace('/upload/', '/upload/w_800,h_400,c_fill,f_auto,q_auto/')
-                    else:
-                        cover_url = f"{settings.MEDIA_URL}{cover_url}"
-                    return cover_url
+                # Since cover_image is now URLField (string), handle it directly
+                cover_url = vendor.cover_image
+                if isinstance(cover_url, str) and 'cloudinary.com' in cover_url:
+                    # Add Cloudinary transformations for optimized display
+                    cover_url = cover_url.replace('/upload/', '/upload/w_800,h_400,c_fill,f_auto,q_auto/')
+                return cover_url
             except Exception:
                 pass
         return None
@@ -586,12 +584,17 @@ class VendorMenuDetailView(APIView):
         """Get image URL"""
         if image_field:
             try:
-                if hasattr(image_field, 'url'):
+                # Handle both URLField (string) and old ImageField objects
+                if isinstance(image_field, str):
+                    url = image_field
+                elif hasattr(image_field, 'url'):
                     url = image_field.url
-                    if 'cloudinary.com' in url:
-                        return url.replace('/upload/', '/upload/w_300,h_300,c_fill,f_auto,q_auto/')
-                    else:
-                        return f"{settings.MEDIA_URL}{url}"
+                else:
+                    url = str(image_field)
+                
+                if 'cloudinary.com' in url:
+                    return url.replace('/upload/', '/upload/w_300,h_300,c_fill,f_auto,q_auto/')
+                return url
             except Exception:
                 pass
         return None
@@ -816,12 +819,17 @@ class PublicVendorMenuItemsView(APIView):
         """Get image URL"""
         if image_field:
             try:
-                if hasattr(image_field, 'url'):
+                # Handle both URLField (string) and old ImageField objects
+                if isinstance(image_field, str):
+                    url = image_field
+                elif hasattr(image_field, 'url'):
                     url = image_field.url
-                    if 'cloudinary.com' in url:
-                        return url.replace('/upload/', '/upload/w_400,h_300,c_fill,f_auto,q_auto/')
-                    else:
-                        return f"{settings.MEDIA_URL}{url}"
+                else:
+                    url = str(image_field)
+                
+                if 'cloudinary.com' in url:
+                    return url.replace('/upload/', '/upload/w_400,h_300,c_fill,f_auto,q_auto/')
+                return url
             except Exception:
                 pass
         return None

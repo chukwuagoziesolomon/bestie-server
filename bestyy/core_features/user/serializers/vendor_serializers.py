@@ -49,25 +49,22 @@ class VendorProfileSerializer(serializers.ModelSerializer):
         data = super().to_representation(instance)
         # Ensure bio and cover_photo are included in the response
         data['bio'] = getattr(instance, 'bio', None)
+        
+        # Include user information for better frontend experience
+        user = instance.user
+        data['user_info'] = {
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'full_name': user.get_full_name(),
+            'email': user.email,
+        }
+        
+        # If business_name is empty, suggest using user's name
+        if not data['business_name']:
+            data['suggested_business_name'] = f"{user.get_full_name()}'s Business"
 
-        # Handle image fields properly - return URLs for ImageFields
-        image_fields = ['cover_photo', 'cover_image', 'logo']
-        for field_name in image_fields:
-            field_value = getattr(instance, field_name, None)
-            if field_value:
-                # If it's a Cloudinary URL string, return as-is
-                if isinstance(field_value, str) and field_value.startswith('http'):
-                    data[field_name] = field_value
-                # If it's a Django ImageField/FileField, get the URL
-                elif hasattr(field_value, 'url'):
-                    try:
-                        data[field_name] = field_value.url
-                    except:
-                        data[field_name] = None
-                else:
-                    data[field_name] = None
-            else:
-                data[field_name] = None
+        # Image fields are now URLFields, so they're returned as-is
+        # No need for special handling since they're plain strings
 
         return data
 

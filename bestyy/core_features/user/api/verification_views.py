@@ -152,20 +152,32 @@ def check_verification_status(request):
         # Normalize phone for matching
         normalized_phone = phone.replace('+', '').replace(' ', '').replace('-', '').strip()
 
-        # Find pending user with this phone
-        pending_qs = PendingUser.objects.filter(is_verified=False).order_by('-created_at')
-        pending = None
-        for pu in pending_qs:
+        # First, check if the phone number exists at all (verified or not)
+        all_pending_users = PendingUser.objects.all().order_by('-created_at')
+        existing_user = None
+        for pu in all_pending_users:
             stored_phone_normalized = pu.phone.replace('+', '').replace(' ', '').replace('-', '').strip()
             if stored_phone_normalized == normalized_phone:
-                pending = pu
+                existing_user = pu
                 break
 
-        if not pending:
+        if not existing_user:
             return Response({
                 'ok': False,
-                'error': 'No pending verification found for this phone number'
+                'error': 'No verification record found for this phone number'
             }, status=status.HTTP_404_NOT_FOUND)
+
+        # If user exists but is already verified, return success
+        if existing_user.is_verified:
+            return Response({
+                'ok': True,
+                'verified': True,
+                'verification_complete': True,
+                'message': 'Phone number has already been verified successfully'
+            })
+
+        # User exists but not verified yet
+        pending = existing_user
 
         if pending.is_verified:
             return Response({

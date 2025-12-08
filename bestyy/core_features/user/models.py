@@ -175,10 +175,10 @@ class UserProfile(models.Model):
     address = models.CharField(max_length=255, null=True, blank=True)
     nick_name = models.CharField(max_length=100, null=True, blank=True)
     language = models.CharField(max_length=50, null=True, blank=True)
-    profile_picture = models.ImageField(
-        upload_to='user_profiles/', 
-        null=True, 
-        blank=True
+    profile_picture = models.URLField(
+        null=True,
+        blank=True,
+        help_text='User profile picture URL (usually from Cloudinary)'
     )
     email_notifications = models.BooleanField(default=True)
     push_notifications = models.BooleanField(default=True)
@@ -238,16 +238,15 @@ class VendorProfile(models.Model):
     business_category = models.CharField(max_length=100)
     cac_number = models.CharField(max_length=100, null=True, blank=True)
     business_description = models.TextField(null=True, blank=True)
-    logo = models.ImageField(
-        upload_to='vendor_logos/',
-        null=True,
-        blank=True
-    )
-    cover_image = models.ImageField(
-        upload_to='vendor_covers/',
+    logo = models.URLField(
         null=True,
         blank=True,
-        help_text='Vendor cover photo for profile display'
+        help_text='Vendor logo URL (usually from Cloudinary)'
+    )
+    cover_image = models.URLField(
+        null=True,
+        blank=True,
+        help_text='Vendor cover photo URL (usually from Cloudinary)'
     )
     business_address = models.CharField(max_length=255)
     delivery_radius = models.CharField(max_length=50)
@@ -399,15 +398,15 @@ class CourierProfile(models.Model):
         choices=VERIFICATION_PREFERENCE_CHOICES
     )
     nin_number = models.CharField(max_length=20, null=True, blank=True)
-    id_upload = models.ImageField(
-        upload_to='courier_ids/', 
-        null=True, 
-        blank=True
+    id_upload = models.URLField(
+        null=True,
+        blank=True,
+        help_text='Courier ID document URL (usually from Cloudinary)'
     )
-    profile_photo = models.ImageField(
-        upload_to='courier_photos/', 
-        null=True, 
-        blank=True
+    profile_photo = models.URLField(
+        null=True,
+        blank=True,
+        help_text='Courier profile photo URL (usually from Cloudinary)'
     )
     agreed_to_terms = models.BooleanField(default=False)
     is_active = models.BooleanField(

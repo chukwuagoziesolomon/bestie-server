@@ -273,14 +273,16 @@ class UserLoginSerializer(serializers.Serializer):
                     profile_data['vendor_info'] = {
                         'id': user.vendor_profile.id,
                         'business_name': user.vendor_profile.business_name,
-                        'is_verified': user.vendor_profile.is_verified,
+                        'verification_status': user.vendor_profile.verification_status,
+                        'is_verified': user.vendor_profile.verification_status == 'approved',
                         'business_category': user.vendor_profile.business_category,
                     }
                 elif user.role == 'courier' and hasattr(user, 'courier_profile'):
                     profile_data['courier_info'] = {
                         'id': user.courier_profile.id,
-                        'is_verified': user.courier_profile.is_verified,
-                        'is_available': user.courier_profile.is_available,
+                        'verification_status': user.courier_profile.verification_status,
+                        'is_verified': user.courier_profile.verification_status == 'approved',
+                        'is_active': user.courier_profile.is_active,
                         'vehicle_type': user.courier_profile.vehicle_type,
                     }
                 

@@ -11,7 +11,7 @@ from .api import (
     unified_search_view, smart_recommendations, vendor_menu_views, vendor_transactions,
     vendor_profile_views, location_services, order_summary, google_places_proxy,
     paystack_pwt_views, test_payment_views, website_cart_views, vendor_autocomplete_views,
-    admin_support_views
+    admin_support_views, vendor_views, image_upload_views
 )
 from .api.user_subscription_views import (
     verify_subscription_payment, user_subscription_status,
@@ -87,6 +87,7 @@ urlpatterns = [
     path('vendors/orders/', vendor_orders.VendorOrdersView.as_view(), name='vendor_orders'),
     path('vendors/menu/', vendor_menu_views.VendorMenuListView.as_view(), name='vendor_menu'),
     path('vendors/me/', user_views.UserProfileView.as_view(), name='vendor_me'),
+    path('vendors/profile/', vendor_views.VendorProfileView.as_view(), name='vendor_profile_me'),  # Get/update vendor profile
     path('vendors/profile/images/', vendor_profile_views.VendorImageUpdateView.as_view(), name='vendor_profile_images'),  # Update vendor logo/cover photos
     path('vendors/stock/', vendor_stock_views.VendorStockListView.as_view(), name='vendor_stock'),
     path('vendors/stock/<int:pk>/', vendor_stock_views.VendorStockDetailView.as_view(), name='vendor_stock_detail'),
@@ -145,8 +146,19 @@ urlpatterns = [
     path('banners/', banner_views.BannerListView.as_view(), name='banners'),
     path('banners/<int:pk>/', banner_views.BannerDetailView.as_view(), name='banner_detail'),
 
+    # Image upload endpoints
+    path('profile/image/', image_upload_views.UserProfileImageUpdateView.as_view(), name='user_profile_image'),
+    path('vendors/images/', image_upload_views.VendorImageUpdateView.as_view(), name='vendor_images'),
+    path('couriers/images/', image_upload_views.CourierImageUpdateView.as_view(), name='courier_images'),
+    path('images/', image_upload_views.UnifiedImageUpdateView.as_view(), name='unified_images'),
+
     # Verification endpoints
     path('verification/supported-banks/', verification_views.get_supported_banks, name='supported_banks'),
+    path('verification/send-phone/', verification_views.send_phone_verification, name='send_phone_verification'),
+    path('verification/verify-phone/', verification_views.verify_phone, name='verify_phone'),
+    path('verification/verify-bank/', verification_views.verify_bank_account, name='verify_bank_account'),
+    path('verification/status/', verification_views.get_user_verification_status, name='user_verification_status'),
+    path('verification/complete-signup/', verification_views.complete_signup_verification, name='complete_signup_verification'),
 
     # Location services
     path('location/geocode/', location_services.AddressGeocodeView.as_view(), name='location_geocode'),
@@ -164,6 +176,12 @@ urlpatterns = [
     path('subscription/initialize/', initialize_subscription_payment, name='initialize_subscription'),
     path('subscription/verify/', verify_subscription_payment, name='verify_subscription'),
     path('subscription/success/', subscription_success_page, name='subscription_success'),
+
+    # Image upload endpoints
+    path('upload/profile-image/', image_upload_views.UserProfileImageUpdateView.as_view(), name='user_profile_image_upload'),
+    path('upload/vendor-images/', image_upload_views.VendorImageUpdateView.as_view(), name='vendor_images_upload'),
+    path('upload/courier-images/', image_upload_views.CourierImageUpdateView.as_view(), name='courier_images_upload'),
+    path('upload/images/', image_upload_views.UnifiedImageUpdateView.as_view(), name='unified_image_upload'),
 
     # Webhook endpoints
     path('webhooks/paystack/', paystack_webhook, name='paystack_webhook'),

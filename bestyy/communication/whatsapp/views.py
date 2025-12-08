@@ -917,54 +917,66 @@ How can I help you today?"""
             return  # Do not process again
         # (intent logic continues below)
 
-        # --- 🚀 ENHANCED AI-FIRST PROCESSING (with spell correction, memory, and RLHF) ---
-        from .ai_first_processor import integrate_ai_first_processing
+        # --- PRIORITY: Handle onboarding flow FIRST (before any AI processing) ---
+        state = conversation.onboarding_state
+        user_obj = conversation.user
         
-        ai_first_context = {
-            'user_exists': bool(conversation.user),
-            'awaiting_address': conversation.awaiting_address,
-            'conversation': conversation,
-            'phone_number': from_number
-        }
-        
-        # Try AI-first processing
-        ai_first_result = integrate_ai_first_processing(content, whatsapp_message, conversation, ai_first_context)
-        
-        # If AI handled it (not a direct command), send response and return
-        if ai_first_result and ai_first_result.get('response'):
-            logger.info(f"✨ AI-first handled message with confidence {ai_first_result.get('confidence', 0):.2f}")
-            meta_service.send_message(to=from_number, message=ai_first_result['response'])
-            
-            # Update message with AI response
-            whatsapp_message.ai_response = ai_first_result['response']
-            whatsapp_message.ai_confidence = ai_first_result.get('confidence', 0.0)
-            whatsapp_message.is_ai_processed = True
-            whatsapp_message.save()
-            return
-        
-        # If it was a direct command or AI couldn't handle, continue with rule-based processing
-        logger.info(f"🔧 Continuing with rule-based processing (handled_by: {ai_first_result.get('handled_by', 'unknown') if ai_first_result else 'none'})")
 
-        # --- SMART INTENT DETECTION (AI-based intent classifier for ALL messages) ---
-        # Block AI for users who haven't completed signup (except verification)
+
+        
+        # --- SMART INTENT DETECTION (AI-based intent classifier) ---
+        # Only process AI after onboarding is handled
         from .ai_service import WhatsAppAIService, WhatsAppMessage
         category = None
         
-        if conversation.user or conversation.onboarding_state == 'onboarded':
+        # --- 🚀 ENHANCED AI-FIRST PROCESSING (only for onboarded users) ---
+        if conversation.user and conversation.onboarding_state == 'onboarded':
+            from .ai_first_processor import integrate_ai_first_processing
+            
+            ai_first_context = {
+                'user_exists': bool(conversation.user),
+                'awaiting_address': conversation.awaiting_address,
+                'conversation': conversation,
+                'phone_number': from_number
+            }
+            
+            # Try AI-first processing
+            ai_first_result = integrate_ai_first_processing(content, whatsapp_message, conversation, ai_first_context)
+            
+            # If AI handled it (not a direct command), send response and return
+            if ai_first_result and ai_first_result.get('response'):
+                logger.info(f"✨ AI-first handled message with confidence {ai_first_result.get('confidence', 0):.2f}")
+                meta_service.send_message(to=from_number, message=ai_first_result['response'])
+                
+                # Update message with AI response
+                whatsapp_message.ai_response = ai_first_result['response']
+                whatsapp_message.ai_confidence = ai_first_result.get('confidence', 0.0)
+                whatsapp_message.is_ai_processed = True
+                whatsapp_message.save()
+                return
+            
+            # If it was a direct command or AI couldn't handle, continue with rule-based processing
+            logger.info(f"🔧 Continuing with rule-based processing (handled_by: {ai_first_result.get('handled_by', 'unknown') if ai_first_result else 'none'})")
+
+        # AI PROCESSING: Only for fully onboarded users
+        if conversation.user and conversation.onboarding_state == 'onboarded':
             ai_service = WhatsAppAIService()
-            intent_result = ai_service.process_message(whatsapp_message, context={'user_exists': bool(conversation.user)})
+            intent_result = ai_service.process_message(whatsapp_message, context={'user_exists': True})
             category = intent_result.get('category', None)
+            print(f"[AI DEBUG] AI processed for onboarded user - category: {category}")
         else:
-            # Only allow verification intent for non-signed-up users
+            # NO AI FOR NON-SIGNED-UP USERS - except verification codes
             import re
             if re.match(r'^verify\s+\d{6}$', content.lower().strip()):
                 ai_service = WhatsAppAIService()
                 intent_result = ai_service.process_message(whatsapp_message, context={'user_exists': False})
                 category = intent_result.get('category', None)
+                print(f"[AI DEBUG] Verification code detected - category: {category}")
             else:
-                # Force signup for non-verification messages
-                intent_result = {'category': 'needs_signup'}
-                category = 'needs_signup'
+                # Block all AI processing until signup complete
+                intent_result = {'category': None}
+                category = None
+                print(f"[AI DEBUG] AI blocked - user must complete signup first")
 
         # --- Handle verification intent (AI detected) ---
         if category == 'verification':
@@ -1035,16 +1047,16 @@ Your account is now verified. Enjoy the service!
                     meta_service.send_message(to=from_number, message=reply)
                 return
         
-        # --- Handle needs_signup intent (AI detected non-verified user trying to order) ---
+        # --- Handle needs_signup intent (should rarely trigger now due to new logic) ---
         if category == 'needs_signup':
-            # Force them to signup first
-            if not conversation.onboarding_state:
-                conversation.onboarding_state = 'awaiting_email'
-                conversation.save()
+            print(f"[SIGNUP DEBUG] needs_signup category triggered - redirecting to signup")
+            conversation.onboarding_state = 'awaiting_email'
+            conversation.save()
             
             reply = (
+                "🔐 **Account Required**\n"
                 "I'd love to help you with that! But first, let's get your account set up.\n\n"
-                "Please provide your email address so I can create your Bestyy account. "
+                "📧 Please provide your email address so I can create your Bestyy account. "
                 "If you've used Bestyy before, use the same email address you registered with."
             )
             meta_service.send_message(to=from_number, message=reply)
@@ -1053,46 +1065,191 @@ Your account is now verified. Enjoy the service!
 
         # --- CUSTOMER CHATBOT CONVERSATIONAL FLOW (ONBOARDING FSM) ---
         state = conversation.onboarding_state
+        print(f"[FLOW DEBUG] User object: {user_obj}, Conversation state: '{state}'")
 
         # - Not onboarded and no state yet: ALWAYS ask for email for new conversations
         # If user exists but state is not 'onboarded', they still need to complete onboarding
         if user_obj and state != 'onboarded':
             # Don't automatically mark as onboarded - they need to provide email first
             logger.info(f"User exists but not onboarded: {user_obj.email}")
+            print(f"[FLOW DEBUG] User exists but not onboarded path")
             
-        # CRITICAL: Any new WhatsApp conversation without linked user MUST go through signup
-        if not user_obj and not state:
-            # Check if this is an email first
-            import re
-            email_match = re.match(r"[^@\s]+@[^@\s]+\.[^@\s]+", content)
-            if email_match:
-                # Set state to awaiting_email so the email processing logic below will handle it
-                conversation.onboarding_state = 'awaiting_email'
+        # MANDATORY SIGNUP ENFORCEMENT: Block ALL functionality until user completes signup
+        if not user_obj or conversation.onboarding_state != 'onboarded':
+            print(f"[SIGNUP DEBUG] Enforcing signup - user_obj: {user_obj}, state: {conversation.onboarding_state}")
+            
+            # Handle email submission during signup process
+            if conversation.onboarding_state == 'awaiting_email':
+                # Continue to email processing below - don't return here
+                pass
+            elif conversation.onboarding_state == 'awaiting_link_confirmation':
+                # Continue to link confirmation processing below - don't return here
+                pass
+
+            # This section is now handled earlier in the flow - removed to avoid conflicts
+                
+
+                # Handle location question
+                location_response = content.strip()
+                user_name = user_obj.first_name if user_obj and user_obj.first_name else "there"
+                
+                # Save location preferences to conversation context and user profile
+                conversation.context_data = conversation.context_data or {}
+                conversation.context_data['location_preference'] = location_response
+                
+                # Save to user profile and create default address
+                if user_obj:
+                    try:
+                        profile, _ = UserProfile.objects.get_or_create(user=user_obj)
+                        profile.preferred_location = location_response
+                        profile.save()
+                        
+                        # Create default address if none exists
+                        from bestyy.core_features.user.models import Address
+                        if not Address.objects.filter(user=user_obj, is_default=True).exists():
+                            Address.objects.create(
+                                user=user_obj,
+                                title="Home",
+                                address=location_response,
+                                is_default=True
+                            )
+                        
+                        logger.info(f"Saved location for {user_obj.email}: {location_response}")
+                    except Exception as e:
+                        logger.error(f"Error saving location: {str(e)}")
+                
+                # Move to food preferences question
+                conversation.onboarding_state = 'onboarding_questions_food_prefs'
                 conversation.save()
-                # Continue to process as if we're in awaiting_email state
-                pass  # Fall through to the awaiting_email logic
-            else:
-                # ALWAYS ask for email first - this is critical for proper signup
-                conversation.onboarding_state = 'awaiting_email'
-                conversation.save()
-                # Use exciting welcome greeting
-                from .greeting_service import whatsapp_greeting_service
-                reply = whatsapp_greeting_service.get_welcome_greeting()
-                meta_service.send_message(to=from_number, message=reply)
-                return
-        
-        # Block any food ordering for users without proper signup
-        if not user_obj and state != 'onboarded':
-            # They must complete email signup first
-            if state != 'awaiting_email' and state != 'awaiting_link_confirmation':
-                conversation.onboarding_state = 'awaiting_email'
-                conversation.save()
-                reply = (
-                    f"I'd love to help you order food! But first, let's get your account set up.\n\n"
-                    f"Please provide your email address so I can create your Bestyy account."
+                
+                food_prefs_question = (
+                    f"✅ Great, {user_name}! I've got your location as {location_response}.\n\n"
+                    "🍽️ Question 3: What type of food do you usually enjoy?\n\n"
+                    "Quick options:\n"
+                    "1️⃣ Local Nigerian dishes\n"
+                    "2️⃣ Fast food (burgers, pizza)\n" 
+                    "3️⃣ International cuisine\n"
+                    "4️⃣ Healthy/Vegetarian options\n"
+                    "5️⃣ I eat everything!\n\n"
+                    "Just reply with a number or tell me what you like!"
                 )
-                meta_service.send_message(to=from_number, message=reply)
+                meta_service.send_message(to=from_number, message=food_prefs_question)
                 return
+                
+            elif conversation.onboarding_state == 'onboarding_questions_food_prefs':
+                # Handle food preferences question
+                food_response = content.strip()
+                user_name = user_obj.first_name if user_obj and user_obj.first_name else "there"
+                
+                # Map number choices to categories
+                preference_mapping = {
+                    '1': 'Local Nigerian dishes',
+                    '2': 'Fast food', 
+                    '3': 'International cuisine',
+                    '4': 'Healthy/Vegetarian',
+                    '5': 'Everything'
+                }
+                
+                if food_response in preference_mapping:
+                    food_preference = preference_mapping[food_response]
+                else:
+                    food_preference = food_response
+                
+                # Save to conversation context and user profile
+                conversation.context_data = conversation.context_data or {}
+                conversation.context_data['food_preference'] = food_preference
+                
+                if user_obj:
+                    try:
+                        profile, _ = UserProfile.objects.get_or_create(user=user_obj)
+                        profile.food_category_preference = food_preference
+                        profile.save()
+                        logger.info(f"Saved food preference for {user_obj.email}: {food_preference}")
+                    except Exception as e:
+                        logger.error(f"Error saving food preference: {str(e)}")
+                
+                # Move to budget question
+                conversation.onboarding_state = 'onboarding_questions_budget'
+                conversation.save()
+                
+                budget_question = (
+                    f"Nice choice, {user_name}! ✅ I love {food_preference} too!\n\n"
+                    "💰 Final question: What's your typical budget per meal?\n\n"
+                    "Options:\n"
+                    "1️⃣ Budget-friendly (₦500-1,500)\n"
+                    "2️⃣ Moderate (₦1,500-3,000)\n" 
+                    "3️⃣ Premium (₦3,000+)\n"
+                    "4️⃣ It varies\n\n"
+                    "Reply with a number or your budget range!"
+                )
+                meta_service.send_message(to=from_number, message=budget_question)
+                return
+                
+            elif conversation.onboarding_state == 'onboarding_questions_budget':
+                # Handle budget question and complete onboarding
+                budget_response = content.strip()
+                user_name = user_obj.first_name if user_obj and user_obj.first_name else "there"
+                
+                # Map number choices to budget ranges
+                budget_mapping = {
+                    '1': 'Budget-friendly (₦500-1,500)',
+                    '2': 'Moderate (₦1,500-3,000)',
+                    '3': 'Premium (₦3,000+)', 
+                    '4': 'Varies'
+                }
+                
+                if budget_response in budget_mapping:
+                    budget_preference = budget_mapping[budget_response]
+                else:
+                    budget_preference = budget_response
+                
+                # Save to conversation context and user profile
+                conversation.context_data = conversation.context_data or {}
+                conversation.context_data['budget_preference'] = budget_preference
+                
+                if user_obj:
+                    try:
+                        profile, _ = UserProfile.objects.get_or_create(user=user_obj)
+                        profile.budget_preference = budget_preference
+                        profile.save()
+                        logger.info(f"Saved budget preference for {user_obj.email}: {budget_preference}")
+                    except Exception as e:
+                        logger.error(f"Error saving budget preference: {str(e)}")
+                
+                # Complete onboarding 
+                conversation.onboarding_state = 'onboarded'
+                conversation.save()
+                
+# Removed orphaned onboarding code - now goes directly to onboarded state after signup
+
+            else:
+                # Force signup for any other state or new conversation
+                import re
+                email_pattern = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
+                email_match = re.search(email_pattern, content)
+                
+                if email_match:
+                    # User sent email directly - set state and process it
+                    conversation.onboarding_state = 'awaiting_email'
+                    conversation.save()
+                    print(f"[SIGNUP DEBUG] Email detected, setting state to awaiting_email")
+                    # Continue to email processing below
+                else:
+                    # Force signup with compelling message (NO FOOD-FOCUSED GREETINGS)
+                    conversation.onboarding_state = 'awaiting_email'
+                    conversation.save()
+                    
+                    signup_msg = (
+                        f"👋 Hello! Welcome to Bestyy!\n\n"
+                        f"🔐 **Account Required**\n"
+                        f"To give you the best personalized experience and track your orders, I need to create your Bestyy account first.\n\n"
+                        f"📧 **Simply provide your email address** and I'll set up your account instantly!\n\n"
+                        f"💡 If you've used Bestyy before, use the same email to link your WhatsApp.\n\n"
+                        f"Ready to get started? Just send me your email! 😊"
+                    )
+                    meta_service.send_message(to=from_number, message=signup_msg)
+                    print(f"[SIGNUP DEBUG] Sent mandatory signup message")
+                    return
 
         # - Awaiting email: check if email provided, look up, branch for linking if needed
         if state == 'awaiting_email' or (not user_obj and conversation.onboarding_state == 'awaiting_email'):
@@ -1143,27 +1300,39 @@ Your account is now verified. Enjoy the service!
                         meta_service.send_message(to=from_number, message=reply)
                         return
                 else:
-                    # New user: call multi-role registration endpoint to create as 'user'
+                    # New user: create user directly to avoid complex HTTP dependencies
                     import secrets
                     password = secrets.token_urlsafe(8)
                     try:
-                        base_url = (
-                            getattr(settings, 'SELF_BASE_URL', '') or
-                            getattr(settings, 'PUBLIC_BASE_URL', '') or
-                            getattr(settings, 'API_BASE_URL', '') or
-                            getattr(settings, 'BASE_URL', '')
-                        ).rstrip('/') or 'http://127.0.0.1:8000'
-                        endpoint = f"{base_url}/api/user/register/multi-role/"
-                        payload = {
-                            'email': email,
+                        # Create user directly using Django's user manager
+                        from django.contrib.auth import get_user_model
+                        from ...core_features.user.models import UserProfile
+                        
+                        UserModel = get_user_model()
+                        
+                        # Create the user
+                        user_data = {
                             'first_name': (contact_name.split()[0] if contact_name else 'WhatsApp'),
                             'last_name': (' '.join(contact_name.split()[1:]) if contact_name and len(contact_name.split()) > 1 else 'User'),
                             'phone': from_number,
-                            'password': password,
-                            'confirm_password': password,
-                            'roles': ['user']
+                            'role': 'user'
                         }
-                        resp = requests.post(endpoint, json=payload, timeout=8)
+                        
+                        # Create user and set password
+                        user = UserModel.objects.create_user(
+                            email=email,
+                            password=password,
+                            **user_data
+                        )
+                        
+                        # Create or update user profile
+                        UserProfile.objects.get_or_create(
+                            user=user,
+                            defaults={'phone': from_number}
+                        )
+                        
+                        resp = type('Response', (), {'status_code': 201})()  # Mock success response
+                        
                         if resp.status_code in (200, 201):
                             # Link conversation to the newly created/updated user
                             try:
@@ -1190,7 +1359,7 @@ Your account is now verified. Enjoy the service!
                                             <h1>Welcome to Bestyy!</h1>
                                         </div>
                                         <div style='background: #fff; border-radius: 12px; margin: 32px 0; padding: 32px;'>
-                                            <p style='font-size: 18px;'>Hello {payload['first_name']},</p>
+                                            <p style='font-size: 18px;'>Hello {user_data['first_name']},</p>
                                             <p>We're excited to have you! Here are your account details for Bestyy:</p>
                                             <ul>
                                                 <li><strong>Email:</strong> {email}</li>
@@ -1215,7 +1384,8 @@ Your account is now verified. Enjoy the service!
                                 logger.warning(f"Failed to send welcome email: {str(e)}")
 
                             # Exciting personalized welcome with celebration
-                            first_name = payload['first_name']
+                            first_name = user_data['first_name']
+                            from .greeting_service import whatsapp_greeting_service
                             celebration_message = whatsapp_greeting_service.get_post_signup_celebration(first_name)
                             
                             # Send celebration + account details
@@ -1226,36 +1396,41 @@ Your account is now verified. Enjoy the service!
                                 to=from_number,
                                 message=full_message
                             )
-                            # Continue with onboarding questions immediately
-                            onboarding_prompt = (
-                                "Hey — I'm Bestyy 👋, your food-finding AI! I'll help you discover, order and reorder meals quickly.\n\n"
-                                "Quick choices — reply with the number or type a word:\n"
-                                "1. Local\n2. Fast food\n3. Western\n4. Vegetarian / Healthy\n5. Desserts & Drinks\n\n"
-                                "Bestyy: I have a few quick questions so I serve you best, would you like to skip or am I allowed to ask?"
+                            # Set state to ask permission for onboarding questions
+                            conversation.onboarding_state = 'onboarded'
+                            conversation.save()
+                            
+                            # Ask permission before starting onboarding questions
+                            permission_message = (
+                                "🎉 Welcome to Bestyy! Your account is ready.\n\n"
+                                "👋 I'm Bestyy, your food-finding AI! I'll help you discover, order and reorder meals quickly.\n\n"
+                                "💡 I have a few quick questions so I can serve you better. Would you like to skip or am I allowed to ask?\n\n"
+                                "Reply:\n• 'YES' or 'ASK' - Let's do it!\n• 'SKIP' - Skip for now"
                             )
-                            meta_service.send_message(to=from_number, message=onboarding_prompt)
+                            meta_service.send_message(to=from_number, message=permission_message)
                         else:
                             meta_service.send_message(
                                 to=from_number,
                                 message="Sorry, we couldn't create your account right now. Please try again in a moment."
                             )
                     except Exception as e:
-                        logger.error(f"Multi-role registration call failed: {str(e)}")
+                        logger.error(f"Multi-role registration failed: {str(e)}")
                         meta_service.send_message(
                             to=from_number,
                             message="Sorry, we couldn't create your account right now. Please try again shortly."
                         )
                     return
             else:
-                # Check if this is a greeting - if so, acknowledge and remind about email
+                # Check if this is a greeting - if so, acknowledge and remind about email (NO FOOD PROMPTS)
                 greeting_words = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening', 'greetings']
                 if content.lower().strip() in greeting_words or any(word in content.lower() for word in greeting_words):
-                    # Use personalized greeting for email reminder
-                    personalized_greeting = whatsapp_greeting_service.get_personalized_greeting("there")
+                    # Use signup-focused greeting for non-signed-up users
+                    from .greeting_service import whatsapp_greeting_service
+                    welcome_greeting = whatsapp_greeting_service.get_welcome_greeting()
                     reply = (
-                        f"{personalized_greeting}\n\n"
-                        f"To continue setting up your Bestyy account, please share your email address with us. "
-                        f"This will help us create your account and get you started!"
+                        f"👋 Hello there!\n\n"
+                        f"{welcome_greeting}\n\n"
+                        f"📧 To get started, please share your email address so I can create your Bestyy account!"
                     )
                     meta_service.send_message(to=from_number, message=reply)
                     return
@@ -1301,41 +1476,14 @@ Your account is now verified. Enjoy the service!
                     conversation.user = existing
                     conversation.onboarding_state = 'onboarded'
                     conversation.save()
-                    # Send confirmation email about linking number
-                    from django.core.mail import send_mail
-                    from django.conf import settings
-                    base_url = getattr(settings, 'BASE_URL', 'https://bestyy.com')
-                    logo_url = f"{base_url}/static/logo.png"
-                    subject = "Bestyy Account Now Linked to WhatsApp"
-                    html_message = f"""
-                        <html><body style='font-family: Nunito Sans, Arial, sans-serif; background: #fafbfc; max-width: 640px; margin: auto;'>
-                            <div style='background: linear-gradient(90deg, #23C7B2 0%, #25AC9B 100%); padding: 24px 0; text-align: center; color: #fff;'>
-                                <img src='{logo_url}' alt='Bestyy' style='max-width: 84px; border-radius: 10px;'><br>
-                                <h1>Your WhatsApp Number Linked!</h1>
-                            </div>
-                            <div style='background: #fff; border-radius: 12px; margin: 32px 0; padding: 32px;'>
-                                <p style='font-size: 18px;'>Hello,</p>
-                                <p>Your WhatsApp number {from_number} is now linked to your Bestyy account ({email}). </p>
-                                <p>You can conveniently place orders and receive notifications through WhatsApp!</p>
-                                <div style='margin: 32px 0 0; color: #666;'>Thank you for using Bestyy!<br>— The Bestyy Team</div>
-                            </div>
-                            <footer style='text-align: center; color: #999; font-size: 12px; margin-top: 24px;'>Bestyy &copy; 2025</footer>
-                        </body></html>
-                    """
-                    send_mail(
-                        subject=subject,
-                        message=f"Your WhatsApp number ({from_number}) is now linked to your Bestyy account.",
-                        html_message=html_message,
-                        from_email=getattr(settings,'DEFAULT_FROM_EMAIL', 'noreply@bestyy.com'),
-                        recipient_list=[email],
-                        fail_silently=False
-                    )
-                    # Get user's name for personalized greeting
-                    user_name = existing.first_name if existing.first_name else "there"
-                    personalized_greeting = whatsapp_greeting_service.get_personalized_greeting(user_name, is_returning=True)
                     
-                    reply = f"✅ Linked! Your WhatsApp number is now connected to {email}.\n\n{personalized_greeting}"
-                    meta_service.send_message(to=from_number, message=reply)
+                    # Start onboarding questions for existing user too
+                    first_question = (
+                        "🍽️ Question 1: Any meal plan, dietary restrictions or allergies I should know about?\n\n"
+                        "(Examples: \"gluten-free\", \"no peanuts\", \"halal\", \"vegetarian\", or \"none\")\n\n"
+                        "Just reply naturally!"
+                    )
+                    meta_service.send_message(to=from_number, message=first_question)
                     return
             else:
                 reply = (

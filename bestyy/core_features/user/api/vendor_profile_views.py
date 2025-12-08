@@ -214,14 +214,18 @@ class VendorProfileDetailView(APIView):
         """Get optimized Cloudinary URL for images"""
         if image_field:
             try:
-                if hasattr(image_field, 'url'):
+                # Handle both URLField (string) and old ImageField objects
+                if isinstance(image_field, str):
+                    url = image_field
+                elif hasattr(image_field, 'url'):
                     url = image_field.url
-                    if 'cloudinary.com' in url:
-                        # Optimize for web display
-                        return url.replace('/upload/', '/upload/w_400,h_400,c_fill,f_auto,q_auto/')
-                    return url
                 else:
-                    return str(image_field)
+                    url = str(image_field)
+                
+                if 'cloudinary.com' in url:
+                    # Optimize for web display
+                    return url.replace('/upload/', '/upload/w_400,h_400,c_fill,f_auto,q_auto/')
+                return url
             except Exception:
                 return None
         return None
@@ -468,13 +472,17 @@ class VendorMenuItemsView(APIView):
         """Get optimized Cloudinary URL for images"""
         if image_field:
             try:
-                if hasattr(image_field, 'url'):
+                # Handle both URLField (string) and old ImageField objects
+                if isinstance(image_field, str):
+                    url = image_field
+                elif hasattr(image_field, 'url'):
                     url = image_field.url
-                    if 'cloudinary.com' in url:
-                        return url.replace('/upload/', '/upload/w_300,h_300,c_fill,f_auto,q_auto/')
-                    return url
                 else:
-                    return str(image_field)
+                    url = str(image_field)
+                
+                if 'cloudinary.com' in url:
+                    return url.replace('/upload/', '/upload/w_300,h_300,c_fill,f_auto,q_auto/')
+                return url
             except Exception:
                 return None
         return None
