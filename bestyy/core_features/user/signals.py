@@ -160,12 +160,21 @@ def courier_order_completion_handler(sender, instance, **kwargs):
 def user_created_handler(sender, instance, created, **kwargs):
     """Send real-time update when new user is created"""
     if created:
-        # Determine user type
+        # Determine user type - safely check without triggering queries during migrations
         user_type = 'user'
-        if hasattr(instance, 'vendor_profile'):
-            user_type = 'vendor'
-        elif hasattr(instance, 'courier_profile'):
-            user_type = 'courier'
+        try:
+            # Use _state.fields_cache to avoid database query
+            if 'vendor_profile' in instance._state.fields_cache:
+                user_type = 'vendor'
+            elif 'courier_profile' in instance._state.fields_cache:
+                user_type = 'courier'
+            elif instance.role == 'vendor':
+                user_type = 'vendor'
+            elif instance.role == 'courier':
+                user_type = 'courier'
+        except Exception:
+            # During migrations, just use default
+            pass
         
         activity_data = {
             'id': f"user_{instance.id}",
