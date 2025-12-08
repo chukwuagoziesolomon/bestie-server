@@ -167,6 +167,55 @@ def add_websitecart_constraints_if_not_exist(apps, schema_editor):
                         print(f"Warning: Could not add constraint {constraint_name}: {e}")
 
 
+def alter_unique_together_if_not_exists(apps, schema_editor):
+    """Add unique_together constraints only if they don't already exist"""
+    from django.db import connection
+    
+    unique_together_configs = [
+        ('user_cartitem', 'CartItem', {('cart', 'menu_item')}),
+        ('user_favorite', 'Favorite', {('user', 'food_item', 'vendor')}),
+    ]
+    
+    with connection.cursor() as cursor:
+        for table_name, model_name, unique_fields in unique_together_configs:
+            if connection.vendor == 'postgresql':
+                # Check if unique constraint already exists
+                cursor.execute("""
+                    SELECT constraint_name 
+                    FROM information_schema.table_constraints 
+                    WHERE table_name=%s AND constraint_type='UNIQUE';
+                """, [table_name])
+                existing_constraints = [row[0] for row in cursor.fetchall()]
+                
+                # Build expected constraint pattern
+                field_names = '_'.join(sorted(list(unique_fields)[0]))
+                constraint_pattern = f"{table_name}_{field_names}"
+                
+                # Check if any existing constraint matches
+                already_exists = any(constraint_pattern in constraint for constraint in existing_constraints)
+                
+                if not already_exists:
+                    try:
+                        Model = apps.get_model('user', model_name)
+                        schema_editor.alter_unique_together(
+                            Model,
+                            [],  # old unique_together
+                            unique_fields  # new unique_together
+                        )
+                    except Exception as e:
+                        print(f"Warning: Could not add unique_together for {model_name}: {e}")
+            else:  # SQLite
+                try:
+                    Model = apps.get_model('user', model_name)
+                    schema_editor.alter_unique_together(
+                        Model,
+                        [],
+                        unique_fields
+                    )
+                except Exception as e:
+                    print(f"Warning: Could not add unique_together for {model_name}: {e}")
+
+
 class Migration(migrations.Migration):
 
     initial = True
@@ -185,11 +234,10 @@ class Migration(migrations.Migration):
         # Add constraints conditionally
         migrations.RunPython(add_constraints_if_not_exist, migrations.RunPython.noop),
         
-        # Keep the rest of the operations (unique_together and indexes)
-        migrations.AlterUniqueTogether(
-            name='cartitem',
-            unique_together={('cart', 'menu_item')},
-        ),
+        # Add unique_together constraints conditionally
+        migrations.RunPython(alter_unique_together_if_not_exists, migrations.RunPython.noop),
+        
+        # Keep the rest of the operations (indexes)
         migrations.AddIndex(
             model_name='episodicmemory',
             index=models.Index(fields=['user', 'memory_type'], name='ai_episodic_user_id_a3a0b6_idx'),
@@ -262,10 +310,7 @@ class Migration(migrations.Migration):
             model_name='systemsettings',
             index=models.Index(fields=['key', 'is_active'], name='user_system_key_db1f02_idx'),
         ),
-        migrations.AlterUniqueTogether(
-            name='favorite',
-            unique_together={('user', 'food_item', 'vendor')},
-        ),
+        # AlterUniqueTogether for 'favorite' is handled by alter_unique_together_if_not_exists above
         migrations.AddIndex(
             model_name='cart',
             index=models.Index(fields=['user', 'vendor', 'is_active'], name='user_cart_user_id_7e8404_idx'),
