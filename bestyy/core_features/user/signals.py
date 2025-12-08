@@ -332,14 +332,20 @@ def create_all_user_profiles(sender, instance, created, **kwargs):
 def save_user_profile(sender, instance, **kwargs):
     """
     Save the appropriate profile when the user is saved.
+    Safely checks for related profiles without triggering queries during migrations.
     """
-    if hasattr(instance, 'profile'):
-        instance.profile.save()
-    elif hasattr(instance, 'vendor_profile'):
-        instance.vendor_profile.save()
-    elif hasattr(instance, 'courier_profile'):
-        instance.courier_profile.save()
-        logger = logging.getLogger(__name__)
-        logger.info(f"New courier profile created for user {instance.user_id}. Verification status set to 'pending'.")
+    try:
+        # Check fields_cache to avoid database queries during migrations
+        if 'profile' in instance._state.fields_cache:
+            instance.profile.save()
+        elif 'vendor_profile' in instance._state.fields_cache:
+            instance.vendor_profile.save()
+        elif 'courier_profile' in instance._state.fields_cache:
+            instance.courier_profile.save()
+            logger = logging.getLogger(__name__)
+            logger.info(f"New courier profile created for user {instance.user_id}. Verification status set to 'pending'.")
+    except Exception:
+        # During migrations, tables might not be fully set up yet
+        pass
 
 # Vendor popularity tracking removed
