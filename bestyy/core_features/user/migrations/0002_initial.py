@@ -169,51 +169,53 @@ def add_websitecart_constraints_if_not_exist(apps, schema_editor):
 
 def alter_unique_together_if_not_exists(apps, schema_editor):
     """Add unique_together constraints only if they don't already exist"""
-    from django.db import connection
+    from django.db import connection, transaction
     
     unique_together_configs = [
         ('user_cartitem', 'CartItem', {('cart', 'menu_item')}),
         ('user_favorite', 'Favorite', {('user', 'food_item', 'vendor')}),
     ]
     
-    with connection.cursor() as cursor:
-        for table_name, model_name, unique_fields in unique_together_configs:
-            if connection.vendor == 'postgresql':
-                # Check if unique constraint already exists
-                cursor.execute("""
-                    SELECT constraint_name 
-                    FROM information_schema.table_constraints 
-                    WHERE table_name=%s AND constraint_type='UNIQUE';
-                """, [table_name])
-                existing_constraints = [row[0] for row in cursor.fetchall()]
-                
-                # Build expected constraint pattern
-                field_names = '_'.join(sorted(list(unique_fields)[0]))
-                constraint_pattern = f"{table_name}_{field_names}"
-                
-                # Check if any existing constraint matches
-                already_exists = any(constraint_pattern in constraint for constraint in existing_constraints)
-                
-                if not already_exists:
-                    try:
+    for table_name, model_name, unique_fields in unique_together_configs:
+        try:
+            # Use a separate transaction/savepoint for each constraint check
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    if connection.vendor == 'postgresql':
+                        # Check if unique constraint already exists
+                        cursor.execute("""
+                            SELECT constraint_name 
+                            FROM information_schema.table_constraints 
+                            WHERE table_name=%s AND constraint_type='UNIQUE';
+                        """, [table_name])
+                        existing_constraints = [row[0] for row in cursor.fetchall()]
+                        
+                        # Build expected constraint pattern
+                        field_names = '_'.join(sorted(list(unique_fields)[0]))
+                        constraint_pattern = f"{table_name}_{field_names}"
+                        
+                        # Check if any existing constraint matches
+                        already_exists = any(constraint_pattern in constraint for constraint in existing_constraints)
+                        
+                        if not already_exists:
+                            Model = apps.get_model('user', model_name)
+                            schema_editor.alter_unique_together(
+                                Model,
+                                [],  # old unique_together
+                                unique_fields  # new unique_together
+                            )
+                        else:
+                            print(f"Info: unique_together for {model_name} already exists, skipping")
+                    else:  # SQLite
                         Model = apps.get_model('user', model_name)
                         schema_editor.alter_unique_together(
                             Model,
-                            [],  # old unique_together
-                            unique_fields  # new unique_together
+                            [],
+                            unique_fields
                         )
-                    except Exception as e:
-                        print(f"Warning: Could not add unique_together for {model_name}: {e}")
-            else:  # SQLite
-                try:
-                    Model = apps.get_model('user', model_name)
-                    schema_editor.alter_unique_together(
-                        Model,
-                        [],
-                        unique_fields
-                    )
-                except Exception as e:
-                    print(f"Warning: Could not add unique_together for {model_name}: {e}")
+        except Exception as e:
+            print(f"Warning: Could not add unique_together for {model_name}: {e}")
+            # Continue to next constraint even if this one fails
 
 
 class Migration(migrations.Migration):
