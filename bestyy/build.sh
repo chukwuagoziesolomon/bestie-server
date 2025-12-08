@@ -30,6 +30,8 @@ python -B manage.py collectstatic --noinput
 
 # Run database migrations
 echo "Running database migrations..."
+# Fake-apply 0002 migration since user_id column already exists in production
+python -B manage.py migrate user 0002_add_userprofile_user_fk --fake
 python -B manage.py migrate --run-syncdb
 
 # Create cache table
