@@ -130,41 +130,46 @@ def add_constraints_if_not_exist(apps, schema_editor):
 
 def add_websitecart_constraints_if_not_exist(apps, schema_editor):
     """Add website cart constraints only if they don't already exist"""
-    from django.db import connection
+    from django.db import connection, transaction
     
     constraints_to_check = [
         'unique_anonymous_cart_product',
         'unique_user_product'
     ]
     
-    with connection.cursor() as cursor:
-        for constraint_name in constraints_to_check:
-            if connection.vendor == 'postgresql':
-                cursor.execute("""
-                    SELECT constraint_name 
-                    FROM information_schema.table_constraints 
-                    WHERE table_name='user_websitecartitem' AND constraint_name=%s;
-                """, [constraint_name])
-                exists = cursor.fetchone()
-                
-                if not exists:
-                    try:
-                        WebsiteCartItem = apps.get_model('user', 'WebsiteCartItem')
-                        if constraint_name == 'unique_anonymous_cart_product':
-                            constraint = models.UniqueConstraint(
-                                condition=models.Q(('anonymous_cart__isnull', False)), 
-                                fields=('anonymous_cart', 'product'), 
-                                name='unique_anonymous_cart_product'
-                            )
-                        else:
-                            constraint = models.UniqueConstraint(
-                                condition=models.Q(('user__isnull', False)), 
-                                fields=('user', 'product'), 
-                                name='unique_user_product'
-                            )
-                        schema_editor.add_constraint(WebsiteCartItem, constraint)
-                    except Exception as e:
-                        print(f"Warning: Could not add constraint {constraint_name}: {e}")
+    for constraint_name in constraints_to_check:
+        # Each constraint must be in its own atomic block
+        try:
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    if connection.vendor == 'postgresql':
+                        cursor.execute("""
+                            SELECT constraint_name 
+                            FROM information_schema.table_constraints 
+                            WHERE table_name='user_websitecartitem' AND constraint_name=%s;
+                        """, [constraint_name])
+                        exists = cursor.fetchone()
+                        
+                        if not exists:
+                            try:
+                                WebsiteCartItem = apps.get_model('user', 'WebsiteCartItem')
+                                if constraint_name == 'unique_anonymous_cart_product':
+                                    constraint = models.UniqueConstraint(
+                                        condition=models.Q(('anonymous_cart__isnull', False)), 
+                                        fields=('anonymous_cart', 'product'), 
+                                        name='unique_anonymous_cart_product'
+                                    )
+                                else:
+                                    constraint = models.UniqueConstraint(
+                                        condition=models.Q(('user__isnull', False)), 
+                                        fields=('user', 'product'), 
+                                        name='unique_user_product'
+                                    )
+                                schema_editor.add_constraint(WebsiteCartItem, constraint)
+                            except Exception as e:
+                                print(f"Warning: Could not add constraint {constraint_name}: {e}")
+        except Exception as e:
+            print(f"Warning: Transaction failed for constraint {constraint_name}: {e}")
 
 
 def alter_unique_together_if_not_exists(apps, schema_editor):
@@ -220,7 +225,7 @@ def alter_unique_together_if_not_exists(apps, schema_editor):
 
 def add_indexes_if_not_exist(apps, schema_editor):
     """Add indexes only if they don't already exist"""
-    from django.db import connection
+    from django.db import connection, transaction
     
     # Define all indexes to add
     indexes_to_add = [
@@ -247,29 +252,31 @@ def add_indexes_if_not_exist(apps, schema_editor):
         ('user_cart', 'Cart', models.Index(fields=['status', 'updated_at'], name='user_cart_status_bbcacd_idx')),
     ]
     
-    with connection.cursor() as cursor:
-        for table_name, model_name, index in indexes_to_add:
-            try:
-                if connection.vendor == 'postgresql':
-                    # Check if index already exists
-                    cursor.execute("""
-                        SELECT indexname 
-                        FROM pg_indexes 
-                        WHERE tablename=%s AND indexname=%s;
-                    """, [table_name, index.name])
-                    exists = cursor.fetchone()
-                    
-                    if not exists:
-                        Model = apps.get_model('user', model_name)
-                        schema_editor.add_index(Model, index)
-                else:  # SQLite
-                    try:
-                        Model = apps.get_model('user', model_name)
-                        schema_editor.add_index(Model, index)
-                    except:
-                        pass  # Index might already exist
-            except Exception as e:
-                print(f"Warning: Could not add index {index.name}: {e}")
+    for table_name, model_name, index in indexes_to_add:
+        # Each index creation must be in its own atomic block to prevent transaction pollution
+        try:
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    if connection.vendor == 'postgresql':
+                        # Check if index already exists
+                        cursor.execute("""
+                            SELECT indexname 
+                            FROM pg_indexes 
+                            WHERE tablename=%s AND indexname=%s;
+                        """, [table_name, index.name])
+                        exists = cursor.fetchone()
+                        
+                        if not exists:
+                            Model = apps.get_model('user', model_name)
+                            schema_editor.add_index(Model, index)
+                    else:  # SQLite
+                        try:
+                            Model = apps.get_model('user', model_name)
+                            schema_editor.add_index(Model, index)
+                        except:
+                            pass  # Index might already exist
+        except Exception as e:
+            print(f"Warning: Could not add index {index.name}: {e}")
 
 
 class Migration(migrations.Migration):
