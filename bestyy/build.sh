@@ -30,7 +30,7 @@ python -B manage.py collectstatic --noinput
 
 # Run database migrations
 echo "Running database migrations..."
-python -B manage.py migrate --run-syncdb 2>&1 | grep -v "Your models in app"
+python -B manage.py migrate --run-syncdb
 
 # Create cache table
 echo "Creating cache table..."
