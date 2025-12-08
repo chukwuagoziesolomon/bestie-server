@@ -218,6 +218,60 @@ def alter_unique_together_if_not_exists(apps, schema_editor):
             # Continue to next constraint even if this one fails
 
 
+def add_indexes_if_not_exist(apps, schema_editor):
+    """Add indexes only if they don't already exist"""
+    from django.db import connection
+    
+    # Define all indexes to add
+    indexes_to_add = [
+        ('user_episodicmemory', 'EpisodicMemory', models.Index(fields=['user', 'memory_type'], name='ai_episodic_user_id_a3a0b6_idx')),
+        ('user_episodicmemory', 'EpisodicMemory', models.Index(fields=['timestamp'], name='ai_episodic_timesta_b86a88_idx')),
+        ('user_episodicmemory', 'EpisodicMemory', models.Index(fields=['importance_score'], name='ai_episodic_importa_eac1bd_idx')),
+        ('user_episodicmemory', 'EpisodicMemory', models.Index(fields=['session_id'], name='ai_episodic_session_c2b4a1_idx')),
+        ('user_episodicmemory', 'EpisodicMemory', models.Index(fields=['conversation_id'], name='ai_episodic_convers_d432ab_idx')),
+        ('user_imageupload', 'ImageUpload', models.Index(fields=['image_hash', 'image_type', 'is_active'], name='user_imageu_image_h_1fe30b_idx')),
+        ('user_imageupload', 'ImageUpload', models.Index(fields=['user', 'image_type'], name='user_imageu_user_id_7ac288_idx')),
+        ('user_memoryretrievallog', 'MemoryRetrievalLog', models.Index(fields=['user', 'retrieval_type'], name='ai_memory_r_user_id_e0a199_idx')),
+        ('user_memoryretrievallog', 'MemoryRetrievalLog', models.Index(fields=['created_at'], name='ai_memory_r_created_61cb38_idx')),
+        ('user_memoryretrievallog', 'MemoryRetrievalLog', models.Index(fields=['success'], name='ai_memory_r_success_c1879e_idx')),
+        ('user_periodicmemory', 'PeriodicMemory', models.Index(fields=['user', 'pattern_type'], name='ai_periodic_user_id_4e420b_idx')),
+        ('user_periodicmemory', 'PeriodicMemory', models.Index(fields=['frequency'], name='ai_periodic_frequen_1ec939_idx')),
+        ('user_periodicmemory', 'PeriodicMemory', models.Index(fields=['confidence'], name='ai_periodic_confide_acc91b_idx')),
+        ('user_periodicmemory', 'PeriodicMemory', models.Index(fields=['last_observed'], name='ai_periodic_last_ob_186fd8_idx')),
+        ('user_conversationcontext', 'ConversationContext', models.Index(fields=['user', 'session_id'], name='ai_conversa_user_id_450847_idx')),
+        ('user_conversationcontext', 'ConversationContext', models.Index(fields=['conversation_id'], name='ai_conversa_convers_4d744d_idx')),
+        ('user_conversationcontext', 'ConversationContext', models.Index(fields=['last_activity'], name='ai_conversa_last_ac_f172c5_idx')),
+        ('user_systemsettings', 'SystemSettings', models.Index(fields=['key', 'is_active'], name='user_system_key_db1f02_idx')),
+        ('user_cart', 'Cart', models.Index(fields=['user', 'vendor', 'is_active'], name='user_cart_user_id_7e8404_idx')),
+        ('user_cart', 'Cart', models.Index(fields=['session_key', 'vendor', 'is_active'], name='user_cart_session_f88b66_idx')),
+        ('user_cart', 'Cart', models.Index(fields=['status', 'updated_at'], name='user_cart_status_bbcacd_idx')),
+    ]
+    
+    with connection.cursor() as cursor:
+        for table_name, model_name, index in indexes_to_add:
+            try:
+                if connection.vendor == 'postgresql':
+                    # Check if index already exists
+                    cursor.execute("""
+                        SELECT indexname 
+                        FROM pg_indexes 
+                        WHERE tablename=%s AND indexname=%s;
+                    """, [table_name, index.name])
+                    exists = cursor.fetchone()
+                    
+                    if not exists:
+                        Model = apps.get_model('user', model_name)
+                        schema_editor.add_index(Model, index)
+                else:  # SQLite
+                    try:
+                        Model = apps.get_model('user', model_name)
+                        schema_editor.add_index(Model, index)
+                    except:
+                        pass  # Index might already exist
+            except Exception as e:
+                print(f"Warning: Could not add index {index.name}: {e}")
+
+
 class Migration(migrations.Migration):
 
     initial = True
@@ -239,92 +293,9 @@ class Migration(migrations.Migration):
         # Add unique_together constraints conditionally
         migrations.RunPython(alter_unique_together_if_not_exists, migrations.RunPython.noop),
         
-        # Keep the rest of the operations (indexes)
-        migrations.AddIndex(
-            model_name='episodicmemory',
-            index=models.Index(fields=['user', 'memory_type'], name='ai_episodic_user_id_a3a0b6_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='episodicmemory',
-            index=models.Index(fields=['timestamp'], name='ai_episodic_timesta_b86a88_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='episodicmemory',
-            index=models.Index(fields=['importance_score'], name='ai_episodic_importa_eac1bd_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='episodicmemory',
-            index=models.Index(fields=['session_id'], name='ai_episodic_session_c2b4a1_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='episodicmemory',
-            index=models.Index(fields=['conversation_id'], name='ai_episodic_convers_d432ab_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='imageupload',
-            index=models.Index(fields=['image_hash', 'image_type', 'is_active'], name='user_imageu_image_h_1fe30b_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='imageupload',
-            index=models.Index(fields=['user', 'image_type'], name='user_imageu_user_id_7ac288_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='memoryretrievallog',
-            index=models.Index(fields=['user', 'retrieval_type'], name='ai_memory_r_user_id_e0a199_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='memoryretrievallog',
-            index=models.Index(fields=['created_at'], name='ai_memory_r_created_61cb38_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='memoryretrievallog',
-            index=models.Index(fields=['success'], name='ai_memory_r_success_c1879e_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='periodicmemory',
-            index=models.Index(fields=['user', 'pattern_type'], name='ai_periodic_user_id_4e420b_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='periodicmemory',
-            index=models.Index(fields=['frequency'], name='ai_periodic_frequen_1ec939_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='periodicmemory',
-            index=models.Index(fields=['confidence'], name='ai_periodic_confide_acc91b_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='periodicmemory',
-            index=models.Index(fields=['last_observed'], name='ai_periodic_last_ob_186fd8_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='conversationcontext',
-            index=models.Index(fields=['user', 'session_id'], name='ai_conversa_user_id_450847_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='conversationcontext',
-            index=models.Index(fields=['conversation_id'], name='ai_conversa_convers_4d744d_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='conversationcontext',
-            index=models.Index(fields=['last_activity'], name='ai_conversa_last_ac_f172c5_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='systemsettings',
-            index=models.Index(fields=['key', 'is_active'], name='user_system_key_db1f02_idx'),
-        ),
-        # AlterUniqueTogether for 'favorite' is handled by alter_unique_together_if_not_exists above
-        migrations.AddIndex(
-            model_name='cart',
-            index=models.Index(fields=['user', 'vendor', 'is_active'], name='user_cart_user_id_7e8404_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='cart',
-            index=models.Index(fields=['session_key', 'vendor', 'is_active'], name='user_cart_session_f88b66_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='cart',
-            index=models.Index(fields=['status', 'updated_at'], name='user_cart_status_bbcacd_idx'),
-        ),
+        # Add indexes conditionally
+        migrations.RunPython(add_indexes_if_not_exist, migrations.RunPython.noop),
+        
         # Add website cart constraints conditionally
         migrations.RunPython(add_websitecart_constraints_if_not_exist, migrations.RunPython.noop),
     ]
