@@ -14,10 +14,18 @@ Multiple `0002_initial` migrations try to add foreign key columns that already e
 3. Migrations were applied out of order
 
 ## Solution Implemented
-Modified `bestyy/restaurant_features/product/migrations/0002_initial.py` to check if the column exists before adding it. The migration now:
-1. Checks if `vendor_id` column exists in `product_product` table
-2. Only adds the column if it doesn't exist
-3. Works for both PostgreSQL (production) and SQLite (development)
+Modified all `0002_initial` migrations to check if columns exist before adding them. The migrations now:
+1. Check if each foreign key column exists in their respective tables
+2. Only add columns if they don't exist
+3. Work for both PostgreSQL (production) and SQLite (development)
+4. Use `RunPython` operations to safely handle existing columns
+
+### Migration Strategy
+Each `0002_initial.py` file now:
+- Defines a `check_column_exists()` function for cross-database compatibility
+- Defines an `add_fields_if_not_exist()` function that checks each column before adding
+- Replaces all `AddField` operations with a single `RunPython` operation
+- Keeps all index and constraint operations unchanged
 
 ## Deployment Steps
 

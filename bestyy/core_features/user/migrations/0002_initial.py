@@ -101,6 +101,72 @@ def add_fields_if_not_exist(apps, schema_editor):
                     print(f"Warning: Could not add field {field_name} to {table_name}: {e}")
 
 
+def add_constraints_if_not_exist(apps, schema_editor):
+    """Add constraints only if they don't already exist"""
+    from django.db import connection
+    
+    with connection.cursor() as cursor:
+        # Check if unique_email_role constraint exists
+        if connection.vendor == 'postgresql':
+            cursor.execute("""
+                SELECT constraint_name 
+                FROM information_schema.table_constraints 
+                WHERE table_name='user_user' AND constraint_name='unique_email_role';
+            """)
+            exists = cursor.fetchone()
+            
+            if not exists:
+                User = apps.get_model('user', 'User')
+                constraint = models.UniqueConstraint(fields=('email', 'role'), name='unique_email_role')
+                schema_editor.add_constraint(User, constraint)
+        else:  # SQLite - constraints are handled differently
+            try:
+                User = apps.get_model('user', 'User')
+                constraint = models.UniqueConstraint(fields=('email', 'role'), name='unique_email_role')
+                schema_editor.add_constraint(User, constraint)
+            except Exception as e:
+                print(f"Warning: Could not add constraint unique_email_role: {e}")
+
+
+def add_websitecart_constraints_if_not_exist(apps, schema_editor):
+    """Add website cart constraints only if they don't already exist"""
+    from django.db import connection
+    
+    constraints_to_check = [
+        'unique_anonymous_cart_product',
+        'unique_user_product'
+    ]
+    
+    with connection.cursor() as cursor:
+        for constraint_name in constraints_to_check:
+            if connection.vendor == 'postgresql':
+                cursor.execute("""
+                    SELECT constraint_name 
+                    FROM information_schema.table_constraints 
+                    WHERE table_name='user_websitecartitem' AND constraint_name=%s;
+                """, [constraint_name])
+                exists = cursor.fetchone()
+                
+                if not exists:
+                    try:
+                        WebsiteCartItem = apps.get_model('user', 'WebsiteCartItem')
+                        if constraint_name == 'unique_anonymous_cart_product':
+                            constraint = models.UniqueConstraint(
+                                condition=models.Q(('anonymous_cart__isnull', False)), 
+                                fields=('anonymous_cart', 'product'), 
+                                name='unique_anonymous_cart_product'
+                            )
+                        else:
+                            constraint = models.UniqueConstraint(
+                                condition=models.Q(('user__isnull', False)), 
+                                fields=('user', 'product'), 
+                                name='unique_user_product'
+                            )
+                        schema_editor.add_constraint(WebsiteCartItem, constraint)
+                    except Exception as e:
+                        print(f"Warning: Could not add constraint {constraint_name}: {e}")
+
+
 class Migration(migrations.Migration):
 
     initial = True
@@ -116,11 +182,10 @@ class Migration(migrations.Migration):
         # Use RunPython to add fields conditionally
         migrations.RunPython(add_fields_if_not_exist, migrations.RunPython.noop),
         
-        # Keep the rest of the operations (constraints and indexes)
-        migrations.AddConstraint(
-            model_name='user',
-            constraint=models.UniqueConstraint(fields=('email', 'role'), name='unique_email_role'),
-        ),
+        # Add constraints conditionally
+        migrations.RunPython(add_constraints_if_not_exist, migrations.RunPython.noop),
+        
+        # Keep the rest of the operations (unique_together and indexes)
         migrations.AlterUniqueTogether(
             name='cartitem',
             unique_together={('cart', 'menu_item')},
@@ -213,12 +278,6 @@ class Migration(migrations.Migration):
             model_name='cart',
             index=models.Index(fields=['status', 'updated_at'], name='user_cart_status_bbcacd_idx'),
         ),
-        migrations.AddConstraint(
-            model_name='websitecartitem',
-            constraint=models.UniqueConstraint(condition=models.Q(('anonymous_cart__isnull', False)), fields=('anonymous_cart', 'product'), name='unique_anonymous_cart_product'),
-        ),
-        migrations.AddConstraint(
-            model_name='websitecartitem',
-            constraint=models.UniqueConstraint(condition=models.Q(('user__isnull', False)), fields=('user', 'product'), name='unique_user_product'),
-        ),
+        # Add website cart constraints conditionally
+        migrations.RunPython(add_websitecart_constraints_if_not_exist, migrations.RunPython.noop),
     ]
