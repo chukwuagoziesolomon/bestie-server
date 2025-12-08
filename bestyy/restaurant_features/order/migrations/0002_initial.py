@@ -5,6 +5,80 @@ from django.conf import settings
 from django.db import migrations, models
 
 
+def check_column_exists(cursor, table_name, column_name):
+    """Check if a column exists in a table (works for both PostgreSQL and SQLite)"""
+    from django.db import connection
+    
+    if connection.vendor == 'postgresql':
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name=%s AND column_name=%s;
+        """, [table_name, column_name])
+        return cursor.fetchone() is not None
+    else:  # SQLite
+        cursor.execute(f"PRAGMA table_info({table_name});")
+        columns = [row[1] for row in cursor.fetchall()]
+        return column_name in columns
+
+
+def add_order_fields_if_not_exist(apps, schema_editor):
+    """Add all foreign key fields only if they don't already exist"""
+    from django.db import connection
+    
+    # Define all fields to add with their configurations
+    fields_to_add = [
+        ('order_order', 'courier_id', 'courier', 
+         'user.courierprofile', True, True, 'assigned_orders'),
+        ('order_order', 'customer_id', 'customer',
+         settings.AUTH_USER_MODEL, False, True, 'customer_orders'),
+        ('order_order', 'vendor_id', 'vendor',
+         'user.vendorprofile', False, True, 'vendor_orders'),
+        ('order_orderitem', 'order_id', 'order',
+         'order.order', False, False, 'items'),
+        ('order_orderitem', 'product_id', 'product',
+         'product.product', False, True, 'order_items'),
+        ('order_orderstockreservation', 'order_id', 'order',
+         'order.order', False, False, 'stock_reservations'),
+        ('order_orderstockreservation', 'product_id', 'product',
+         'product.product', False, False, 'stock_reservations'),
+    ]
+    
+    with connection.cursor() as cursor:
+        for field_info in fields_to_add:
+            table_name = field_info[0]
+            column_name = field_info[1]
+            field_name = field_info[2]
+            to_model = field_info[3]
+            blank = field_info[4]
+            null = field_info[5]
+            related_name = field_info[6]
+            
+            # Check if column exists
+            if not check_column_exists(cursor, table_name, column_name):
+                # Get the model
+                model_path = table_name.split('_')
+                app_label = model_path[0]
+                model_name = ''.join(word.capitalize() for word in model_path[1:])
+                
+                try:
+                    Model = apps.get_model(app_label, model_name)
+                    
+                    # Create the field
+                    field = models.ForeignKey(
+                        to_model,
+                        on_delete=django.db.models.deletion.CASCADE if not null else django.db.models.deletion.SET_NULL,
+                        related_name=related_name,
+                        blank=blank,
+                        null=null
+                    )
+                    
+                    field.set_attributes_from_name(field_name)
+                    schema_editor.add_field(Model, field)
+                except Exception as e:
+                    print(f"Warning: Could not add field {field_name} to {table_name}: {e}")
+
+
 class Migration(migrations.Migration):
 
     initial = True
@@ -17,41 +91,10 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='order',
-            name='courier',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='assigned_orders', to='user.courierprofile'),
-        ),
-        migrations.AddField(
-            model_name='order',
-            name='customer',
-            field=models.ForeignKey(null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='customer_orders', to=settings.AUTH_USER_MODEL),
-        ),
-        migrations.AddField(
-            model_name='order',
-            name='vendor',
-            field=models.ForeignKey(null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='vendor_orders', to='user.vendorprofile'),
-        ),
-        migrations.AddField(
-            model_name='orderitem',
-            name='order',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='items', to='order.order'),
-        ),
-        migrations.AddField(
-            model_name='orderitem',
-            name='product',
-            field=models.ForeignKey(null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='order_items', to='product.product'),
-        ),
-        migrations.AddField(
-            model_name='orderstockreservation',
-            name='order',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='stock_reservations', to='order.order'),
-        ),
-        migrations.AddField(
-            model_name='orderstockreservation',
-            name='product',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='stock_reservations', to='product.product'),
-        ),
+        # Use RunPython to add fields conditionally
+        migrations.RunPython(add_order_fields_if_not_exist, migrations.RunPython.noop),
+        
+        # Keep the rest of the operations (indexes)
         migrations.AddIndex(
             model_name='order',
             index=models.Index(fields=['order_number'], name='order_order_order_n_fb1851_idx'),

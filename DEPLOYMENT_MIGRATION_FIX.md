@@ -1,13 +1,17 @@
-# Deployment Fix for Migration Error
+# Deployment Fix for Migration Errors
 
-## Problem
-Production deployment is failing with this error:
+## Problems
+Production deployment is failing with these errors:
 ```
 django.db.utils.ProgrammingError: column "vendor_id" of relation "product_product" already exists
+django.db.utils.ProgrammingError: column "conversation_id" of relation "user_supportescalation" already exists
 ```
 
 ## Root Cause
-The `product.0002_initial` migration tries to add a `vendor_id` column that already exists in the production PostgreSQL database.
+Multiple `0002_initial` migrations try to add foreign key columns that already exist in the production PostgreSQL database. This happens when:
+1. Previous migrations created these columns
+2. The database was manually modified
+3. Migrations were applied out of order
 
 ## Solution Implemented
 Modified `bestyy/restaurant_features/product/migrations/0002_initial.py` to check if the column exists before adding it. The migration now:
@@ -40,7 +44,9 @@ python manage.py migrate product 0002_initial --fake
 This tells Django that the migration has been applied without actually running it.
 
 ## Files Changed
-- `bestyy/restaurant_features/product/migrations/0002_initial.py` - Updated to check for existing column
+- `bestyy/restaurant_features/product/migrations/0002_initial.py` - Updated to check for existing vendor_id column
+- `bestyy/core_features/user/migrations/0002_initial.py` - Updated to check for all existing foreign key columns
+- `bestyy/restaurant_features/order/migrations/0002_initial.py` - Updated to check for all existing foreign key columns
 
 ## Testing
 ✅ Tested locally with SQLite - Migration applies successfully

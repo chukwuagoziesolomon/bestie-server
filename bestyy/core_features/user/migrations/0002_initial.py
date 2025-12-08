@@ -5,6 +5,102 @@ from django.conf import settings
 from django.db import migrations, models
 
 
+def check_column_exists(cursor, table_name, column_name):
+    """Check if a column exists in a table (works for both PostgreSQL and SQLite)"""
+    from django.db import connection
+    
+    if connection.vendor == 'postgresql':
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name=%s AND column_name=%s;
+        """, [table_name, column_name])
+        return cursor.fetchone() is not None
+    else:  # SQLite
+        cursor.execute(f"PRAGMA table_info({table_name});")
+        columns = [row[1] for row in cursor.fetchall()]
+        return column_name in columns
+
+
+def add_fields_if_not_exist(apps, schema_editor):
+    """Add all foreign key fields only if they don't already exist"""
+    from django.db import connection
+    
+    # Define all fields to add with their configurations
+    fields_to_add = [
+        ('user_supportescalation', 'conversation_id', 'conversation', 
+         'whatsapp_ai.whatsappconversation', False, False, 'escalations'),
+        ('user_supportescalation', 'resolved_by_id', 'resolved_by',
+         settings.AUTH_USER_MODEL, True, True, 'resolved_escalations'),
+        ('user_systemsettings', 'updated_by_id', 'updated_by',
+         settings.AUTH_USER_MODEL, True, True, 'updated_settings'),
+        ('order_transfer', 'order_id', 'order',
+         'order.order', True, True, 'transfers'),
+        ('user_transferrecipient', 'user_id', 'user',
+         settings.AUTH_USER_MODEL, False, False, 'transfer_recipients'),
+        ('order_transfer', 'recipient_id', 'recipient',
+         'user.transferrecipient', False, False, 'transfers'),
+        ('user_userprofile', 'user_id', 'user',
+         settings.AUTH_USER_MODEL, False, False, 'profile', True),  # OneToOne
+        ('user_userrecommendationhistory', 'user_id', 'user',
+         settings.AUTH_USER_MODEL, False, False, 'recommendation_history', True),  # OneToOne
+        ('user_vendorprofile', 'user_id', 'user',
+         settings.AUTH_USER_MODEL, False, False, 'vendor_profile', True),  # OneToOne
+        ('user_favorite', 'vendor_id', 'vendor',
+         'user.vendorprofile', True, True, 'favorites'),
+        ('user_cart', 'vendor_id', 'vendor',
+         'user.vendorprofile', False, False, 'carts'),
+        ('user_websitecartitem', 'anonymous_cart_id', 'anonymous_cart',
+         'user.anonymouscart', True, True, 'items'),
+        ('user_websitecartitem', 'product_id', 'product',
+         'product.product', False, False, 'website_cart_items'),
+        ('user_websitecartitem', 'user_id', 'user',
+         settings.AUTH_USER_MODEL, True, True, 'website_cart_items'),
+    ]
+    
+    with connection.cursor() as cursor:
+        for field_info in fields_to_add:
+            table_name = field_info[0]
+            column_name = field_info[1]
+            field_name = field_info[2]
+            to_model = field_info[3]
+            blank = field_info[4]
+            null = field_info[5]
+            related_name = field_info[6]
+            is_one_to_one = len(field_info) > 7 and field_info[7]
+            
+            # Check if column exists
+            if not check_column_exists(cursor, table_name, column_name):
+                # Get the model
+                model_path = table_name.split('_')
+                app_label = model_path[0]
+                model_name = ''.join(word.capitalize() for word in model_path[1:])
+                
+                try:
+                    Model = apps.get_model(app_label, model_name)
+                    
+                    # Create the field
+                    if is_one_to_one:
+                        field = models.OneToOneField(
+                            to_model,
+                            on_delete=django.db.models.deletion.CASCADE,
+                            related_name=related_name
+                        )
+                    else:
+                        field = models.ForeignKey(
+                            to_model,
+                            on_delete=django.db.models.deletion.CASCADE if not null else django.db.models.deletion.SET_NULL,
+                            related_name=related_name,
+                            blank=blank,
+                            null=null
+                        )
+                    
+                    field.set_attributes_from_name(field_name)
+                    schema_editor.add_field(Model, field)
+                except Exception as e:
+                    print(f"Warning: Could not add field {field_name} to {table_name}: {e}")
+
+
 class Migration(migrations.Migration):
 
     initial = True
@@ -17,76 +113,10 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='supportescalation',
-            name='conversation',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='escalations', to='whatsapp_ai.whatsappconversation'),
-        ),
-        migrations.AddField(
-            model_name='supportescalation',
-            name='resolved_by',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='resolved_escalations', to=settings.AUTH_USER_MODEL),
-        ),
-        migrations.AddField(
-            model_name='systemsettings',
-            name='updated_by',
-            field=models.ForeignKey(blank=True, help_text='User who last updated this setting', null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='updated_settings', to=settings.AUTH_USER_MODEL),
-        ),
-        migrations.AddField(
-            model_name='transfer',
-            name='order',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, related_name='transfers', to='order.order'),
-        ),
-        migrations.AddField(
-            model_name='transferrecipient',
-            name='user',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='transfer_recipients', to=settings.AUTH_USER_MODEL),
-        ),
-        migrations.AddField(
-            model_name='transfer',
-            name='recipient',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='transfers', to='user.transferrecipient'),
-        ),
-        migrations.AddField(
-            model_name='userprofile',
-            name='user',
-            field=models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='profile', to=settings.AUTH_USER_MODEL),
-        ),
-        migrations.AddField(
-            model_name='userrecommendationhistory',
-            name='user',
-            field=models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='recommendation_history', to=settings.AUTH_USER_MODEL),
-        ),
-        migrations.AddField(
-            model_name='vendorprofile',
-            name='user',
-            field=models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='vendor_profile', to=settings.AUTH_USER_MODEL),
-        ),
-        migrations.AddField(
-            model_name='favorite',
-            name='vendor',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, related_name='favorites', to='user.vendorprofile'),
-        ),
-        migrations.AddField(
-            model_name='cart',
-            name='vendor',
-            field=models.ForeignKey(help_text='Vendor this cart is associated with', on_delete=django.db.models.deletion.CASCADE, related_name='carts', to='user.vendorprofile'),
-        ),
-        migrations.AddField(
-            model_name='websitecartitem',
-            name='anonymous_cart',
-            field=models.ForeignKey(blank=True, help_text='Cart for anonymous users', null=True, on_delete=django.db.models.deletion.CASCADE, related_name='items', to='user.anonymouscart'),
-        ),
-        migrations.AddField(
-            model_name='websitecartitem',
-            name='product',
-            field=models.ForeignKey(help_text='Product being added to cart', on_delete=django.db.models.deletion.CASCADE, related_name='website_cart_items', to='product.product'),
-        ),
-        migrations.AddField(
-            model_name='websitecartitem',
-            name='user',
-            field=models.ForeignKey(blank=True, help_text='User for authenticated cart', null=True, on_delete=django.db.models.deletion.CASCADE, related_name='website_cart_items', to=settings.AUTH_USER_MODEL),
-        ),
+        # Use RunPython to add fields conditionally
+        migrations.RunPython(add_fields_if_not_exist, migrations.RunPython.noop),
+        
+        # Keep the rest of the operations (constraints and indexes)
         migrations.AddConstraint(
             model_name='user',
             constraint=models.UniqueConstraint(fields=('email', 'role'), name='unique_email_role'),
