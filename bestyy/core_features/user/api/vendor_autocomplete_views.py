@@ -38,6 +38,9 @@ def vendor_autocomplete(request):
     limit = min(int(request.GET.get('limit', 10)), 50)
     location = request.GET.get('location', '').strip()
     category = request.GET.get('category', '').strip()
+    food = request.GET.get('food', '').strip()
+    min_price = request.GET.get('min_price')
+    max_price = request.GET.get('max_price')
     
     # Validate query
     if not query:
@@ -58,78 +61,99 @@ def vendor_autocomplete(request):
             verification_status='approved',
             is_suspended=False
         )
-        
+
         # Apply search across multiple fields with ranking
         search_q = Q()
-        
-        # Exact match (highest priority)
-        search_q |= Q(business_name__iexact=query)
-        
-        # Starts with (high priority)
-        search_q |= Q(business_name__istartswith=query)
-        
-        # Contains (medium priority)
-        search_q |= Q(business_name__icontains=query)
-        
-        # Description and category search (lower priority)
-        search_q |= Q(business_description__icontains=query)
-        search_q |= Q(business_category__icontains=query)
-        search_q |= Q(service_areas__icontains=query)
-        
-        vendors = vendors.filter(search_q).distinct()
-        
-        # Apply filters (location filter removed - search by name regardless of location)
-        # if location:
-        #     vendors = vendors.filter(
-        #         Q(business_address__icontains=location) |
-        #         Q(service_areas__icontains=location)
-        #     )
-        
+        # Vendor name, description, category, service area
+        if query:
+            search_q |= Q(business_name__iexact=query)
+            search_q |= Q(business_name__istartswith=query)
+            search_q |= Q(business_name__icontains=query)
+            search_q |= Q(business_description__icontains=query)
+            search_q |= Q(business_category__icontains=query)
+            search_q |= Q(service_areas__icontains=query)
+
+        # Location filter (city/state/area)
+        if location:
+            search_q |= Q(business_address__icontains=location)
+            search_q |= Q(service_areas__icontains=location)
+
+        # Category filter
         if category:
-            vendors = vendors.filter(business_category__icontains=category)
-        
+            search_q &= Q(business_category__icontains=category)
+
+        # Initial vendor filter
+        vendors = vendors.filter(search_q).distinct()
+
+        # If food or price filters are present, join with Product
+        product_filters = Q()
+        if food:
+            product_filters &= Q(name__icontains=food)
+        if min_price:
+            try:
+                min_price_val = float(min_price)
+                product_filters &= Q(price__gte=min_price_val)
+            except:
+                pass
+        if max_price:
+            try:
+                max_price_val = float(max_price)
+                product_filters &= Q(price__lte=max_price_val)
+            except:
+                pass
+
+        # If any product filter, get vendors with matching products
+        matching_vendor_ids = None
+        matching_products = {}
+        if food or min_price or max_price:
+            products = Product.objects.filter(product_filters, vendor__in=vendors, is_available=True)
+            matching_vendor_ids = set(products.values_list('vendor_id', flat=True))
+            # Map vendor_id to list of matching products
+            for p in products:
+                if p.vendor_id not in matching_products:
+                    matching_products[p.vendor_id] = []
+                matching_products[p.vendor_id].append({
+                    'id': p.id,
+                    'name': p.name,
+                    'price': float(p.price),
+                    'description': p.description,
+                })
+            # Filter vendors to only those with matching products
+            vendors = vendors.filter(id__in=matching_vendor_ids)
+
         # Annotate with relevance score
         vendors = vendors.annotate(
-            # Exact match score
             exact_match=Case(
                 When(business_name__iexact=query, then=Value(100.0)),
                 default=Value(0.0),
                 output_field=FloatField()
             ),
-            # Starts with score
             starts_with=Case(
                 When(business_name__istartswith=query, then=Value(50.0)),
                 default=Value(0.0),
                 output_field=FloatField()
             ),
-            # Calculate total products
             product_count=Count('products', filter=Q(products__is_available=True)),
-            # Calculate average rating (from orders if you have that)
-            # avg_rating=Avg('vendor_orders__rating')  # Uncomment if you have ratings
         )
-        
-        # Sort by relevance and popularity
+
         vendors = vendors.order_by(
             '-exact_match',
             '-starts_with',
             '-product_count',
             Lower('business_name')
         )[:limit]
-        
+
         # Build response
         results = []
         for vendor in vendors:
-            # Get logo URL
             logo_url = None
             if vendor.logo:
                 logo_url = request.build_absolute_uri(vendor.logo.url)
-            
-            # Get cover image URL
             cover_url = None
             if vendor.cover_image:
                 cover_url = request.build_absolute_uri(vendor.cover_image.url)
-            
-            results.append({
+
+            vendor_data = {
                 'id': vendor.id,
                 'business_name': vendor.business_name,
                 'category': vendor.business_category,
@@ -143,16 +167,19 @@ def vendor_autocomplete(request):
                 'closing_hours': str(vendor.closing_hours) if vendor.closing_hours else None,
                 'product_count': vendor.product_count,
                 'phone': vendor.phone,
-                # 'rating': float(vendor.avg_rating or 0),  # Uncomment if you have ratings
-            })
-        
+            }
+            # If product filters, include matching products
+            if matching_products and vendor.id in matching_products:
+                vendor_data['matching_products'] = matching_products[vendor.id]
+            results.append(vendor_data)
+
         return Response({
             'success': True,
             'query': query,
             'count': len(results),
             'results': results
         }, status=status.HTTP_200_OK)
-    
+
     except Exception as e:
         logger.error(f"Error in vendor autocomplete: {str(e)}")
         return Response({

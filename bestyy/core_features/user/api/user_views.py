@@ -136,8 +136,9 @@ class SelectProfileView(APIView):
 class UserProfileView(RetrieveUpdateAPIView):
     """
     API endpoint to view and update user profile.
+    Returns complete user data including profile information.
     """
-    serializer_class = UserProfileSerializer
+    serializer_class = UserDetailSerializer
     permission_classes = [IsAuthenticated]
 
     def get_object(self):
@@ -476,7 +477,9 @@ class UserAddressListView(ListCreateAPIView):
     API endpoint for users to list and create their addresses.
     
     GET: List all addresses for the authenticated user
-    POST: Create a new address for the authenticated user
+    POST: Create a new address for the authenticated user (with Google Maps validation)
+    
+    POST accepts optional 'validate_google' parameter to enable address validation
     """
     serializer_class = AddressSerializer
     permission_classes = [IsAuthenticated]
@@ -486,7 +489,15 @@ class UserAddressListView(ListCreateAPIView):
         return Address.objects.filter(user=self.request.user).order_by('-is_default', '-created_at')
     
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        # Save address with the authenticated user
+        address = serializer.save(user=self.request.user)
+        
+        # If setting as default, unset other defaults
+        if address.is_default:
+            Address.objects.filter(
+                user=self.request.user,
+                is_default=True
+            ).exclude(pk=address.pk).update(is_default=False)
 
 
 class UserAddressDetailView(RetrieveUpdateDestroyAPIView):
@@ -552,6 +563,111 @@ class UserAddressSetDefaultView(APIView):
             return Response({
                 "detail": "Address not found."
             }, status=status.HTTP_404_NOT_FOUND)
+
+
+class ValidateAddressView(APIView):
+    """
+    Validate and parse a Google Place ID into address components
+    
+    POST /api/user/addresses/validate/
+    {
+        "place_id": "ChIJ...",  // Optional: from Google autocomplete
+        "address": "123 Street, Lagos"  // Optional: manual address
+    }
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        from bestyy.core_features.user.services.google_maps_service import GoogleMapsService
+        import requests
+        from django.conf import settings
+        
+        place_id = request.data.get('place_id')
+        address_text = request.data.get('address')
+        
+        if not place_id and not address_text:
+            return Response({
+                'error': 'Either place_id or address is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        google_service = GoogleMapsService()
+        
+        # If place_id provided, get place details
+        if place_id:
+            try:
+                api_key = settings.GOOGLE_MAPS_API_KEY
+                url = f"https://maps.googleapis.com/maps/api/place/details/json"
+                params = {
+                    'place_id': place_id,
+                    'key': api_key,
+                    'fields': 'formatted_address,address_components,geometry'
+                }
+                
+                resp = requests.get(url, params=params, timeout=15)
+                resp.raise_for_status()
+                data = resp.json()
+                
+                if data.get('status') == 'OK' and data.get('result'):
+                    result = data['result']
+                    address_components = result.get('address_components', [])
+                    
+                    # Parse components
+                    parsed = {
+                        'street_address': '',
+                        'city': '',
+                        'state': '',
+                        'postal_code': '',
+                        'formatted_address': result.get('formatted_address'),
+                        'coordinates': {
+                            'latitude': result['geometry']['location']['lat'],
+                            'longitude': result['geometry']['location']['lng']
+                        }
+                    }
+                    
+                    for component in address_components:
+                        types = component.get('types', [])
+                        if 'street_number' in types or 'route' in types:
+                            parsed['street_address'] += component.get('long_name', '') + ' '
+                        elif 'locality' in types or 'administrative_area_level_2' in types:
+                            parsed['city'] = component.get('long_name', '')
+                        elif 'administrative_area_level_1' in types:
+                            parsed['state'] = component.get('long_name', '')
+                        elif 'postal_code' in types:
+                            parsed['postal_code'] = component.get('long_name', '')
+                    
+                    parsed['street_address'] = parsed['street_address'].strip()
+                    
+                    return Response({
+                        'success': True,
+                        'address': parsed
+                    }, status=status.HTTP_200_OK)
+                    
+            except Exception as e:
+                return Response({
+                    'error': f'Failed to fetch place details: {str(e)}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # If only address text provided, geocode it
+        if address_text:
+            result = google_service.validate_and_correct_address(address_text)
+            if result and result.get('is_valid'):
+                return Response({
+                    'success': True,
+                    'address': {
+                        'formatted_address': result.get('corrected_address'),
+                        'coordinates': result.get('coordinates')
+                    }
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response({
+                    'success': False,
+                    'error': 'Address validation failed',
+                    'suggestions': result.get('suggestions', []) if result else []
+                }, status=status.HTTP_400_BAD_REQUEST)
+        
+        return Response({
+            'error': 'Invalid request'
+        }, status=status.HTTP_400_BAD_REQUEST)
 
 
 # Favorites feature (conditionally available)

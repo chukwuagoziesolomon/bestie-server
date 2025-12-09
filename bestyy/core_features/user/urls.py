@@ -36,6 +36,7 @@ urlpatterns = [
     path('health/', user_views.HealthCheckView.as_view(), name='health_check'),
     path('register/multi-role/', user_views.MultiRoleRegistrationView.as_view(), name='multi_role_register'),
     path('addresses/', user_views.UserAddressListView.as_view(), name='user_addresses'),
+    path('addresses/validate/', user_views.ValidateAddressView.as_view(), name='validate_address'),
     path('addresses/<int:pk>/', user_views.UserAddressDetailView.as_view(), name='user_address_detail'),
     path('favorites/', user_views.UserFavoritesListView.as_view(), name='user_favorites'),
     path('favorites/food/', user_views.UserFoodFavoritesView.as_view(), name='user_food_favorites'),
