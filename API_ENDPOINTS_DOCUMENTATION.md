@@ -107,15 +107,38 @@ GET /api/user/vendors/autocomplete/?q=rice&location=Lagos&food=jollof&min_price=
 **GET Endpoint for Verification Status:**
 `GET /api/auth/verification-status/?phone=+2348012345678`
 
-**Response:**
+**Purpose:** Check verification status without submitting verification code
+
+**Response (Verification Pending):**
 ```json
 {
   "ok": true,
   "verified": false,
   "verification_complete": false,
-  "message": "Verification pending. Please check your WhatsApp for the verification code."
+  "expires_at": "2025-12-09T15:30:00Z",
+  "time_remaining_seconds": 1800
 }
 ```
+
+**Response (Already Verified):**
+```json
+{
+  "ok": true,
+  "verified": true,
+  "verification_complete": true,
+  "message": "Phone number has already been verified successfully",
+  "user_id": "123",
+  "role": "user",
+  "first_name": "John",
+  "last_name": "Doe",
+  "tokens": {
+    "access": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "refresh": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  }
+}
+```
+
+**Important Note:** For verified users, the GET endpoint now returns JWT tokens to enable seamless continuation of the onboarding flow after WhatsApp verification.
 
 **Features:**
 - Creates user account upon successful verification
@@ -123,6 +146,7 @@ GET /api/user/vendors/autocomplete/?q=rice&location=Lagos&food=jollof&min_price=
 - Tokens can be used for bank verification and other protected endpoints
 - Frontend should store tokens for subsequent requests
 - GET endpoint allows checking verification status without resubmitting code
+- **GET endpoint returns JWT tokens for already verified users (enables WhatsApp verification flow)**
 
 ---
 

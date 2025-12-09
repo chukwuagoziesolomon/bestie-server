@@ -168,14 +168,57 @@ def check_verification_status(request):
                 'error': 'No verification record found for this phone number'
             }, status=status.HTTP_404_NOT_FOUND)
 
-        # If user exists but is already verified, return success
+        # If user exists but is already verified, return success with tokens
         if existing_user.is_verified:
-            return Response({
+            # Find the associated User account
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+
+            # Try to find user by phone number
+            user = None
+            try:
+                # Check UserProfile, VendorProfile, and CourierProfile for the phone
+                user_profile = UserProfile.objects.filter(phone__icontains=normalized_phone).first()
+                if user_profile:
+                    user = user_profile.user
+                else:
+                    vendor_profile = VendorProfile.objects.filter(phone__icontains=normalized_phone).first()
+                    if vendor_profile:
+                        user = vendor_profile.user
+                    else:
+                        courier_profile = CourierProfile.objects.filter(phone__icontains=normalized_phone).first()
+                        if courier_profile:
+                            user = courier_profile.user
+            except Exception as e:
+                logger.error(f"[CHECK_STATUS] Error finding user for verified phone {normalized_phone}: {str(e)}")
+
+            tokens = None
+            if user:
+                try:
+                    refresh = RefreshToken.for_user(user)
+                    tokens = {
+                        'access': str(refresh.access_token),
+                        'refresh': str(refresh)
+                    }
+                    logger.info(f"[CHECK_STATUS] Generated tokens for verified user {user.id}")
+                except Exception as e:
+                    logger.error(f"[CHECK_STATUS] Error generating tokens for user {user.id}: {str(e)}")
+
+            response_data = {
                 'ok': True,
                 'verified': True,
                 'verification_complete': True,
                 'message': 'Phone number has already been verified successfully'
-            })
+            }
+
+            if tokens:
+                response_data['tokens'] = tokens
+                response_data['user_id'] = str(user.id)
+                response_data['role'] = user.get_roles()[0] if hasattr(user, 'get_roles') and user.get_roles() else 'user'
+                response_data['first_name'] = user.first_name or ''
+                response_data['last_name'] = user.last_name or ''
+
+            return Response(response_data)
 
         # User exists but not verified yet
         pending = existing_user
