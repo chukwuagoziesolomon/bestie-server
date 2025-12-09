@@ -14,6 +14,7 @@ import re
 from django.utils import timezone
 from datetime import timedelta
 from ..models import PendingUser
+from rest_framework_simplejwt.tokens import RefreshToken
 
 logger = logging.getLogger(__name__)
 
@@ -243,6 +244,33 @@ def verify_whatsapp_signup(request):
             }, status=status.HTTP_400_BAD_REQUEST)
 
         ok, payload, http_status = _process_whatsapp_signup_core(phone, code)
+        # If verification succeeded, create JWT tokens for the new user so frontend can continue onboarding
+        if ok and payload and payload.get('user_id'):
+            try:
+                user_id = payload.get('user_id')
+                # user_id might be string - cast
+                from django.contrib.auth import get_user_model
+                User = get_user_model()
+                user = User.objects.filter(id=user_id).first()
+                if user:
+                    refresh = RefreshToken.for_user(user)
+                    tokens = {
+                        'access': str(refresh.access_token),
+                        'refresh': str(refresh)
+                    }
+                    body = {'ok': True, **payload, 'tokens': tokens}
+                    logger.info(f"[VERIFY_SIGNUP] Verification success - tokens generated for user {user_id}")
+                    return Response(body, status=http_status)
+                else:
+                    # User not found - return payload without tokens
+                    body = {'ok': True, **payload}
+                    return Response(body, status=http_status)
+            except Exception as e:
+                logger.error(f"[VERIFY_SIGNUP] Error generating tokens: {str(e)}", exc_info=True)
+                # Fall back to returning success payload without tokens
+                body = {'ok': True, **payload}
+                return Response(body, status=http_status)
+
         body = {'ok': ok, **payload} if ok else {'ok': False, **payload}
         logger.info(f"[VERIFY_SIGNUP] Processing result: ok={ok}, status={http_status}, payload={payload}")
         return Response(body, status=http_status)
