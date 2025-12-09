@@ -307,26 +307,7 @@ class VendorImageUpdateView(APIView):
                 # Handle Cloudinary URL directly
                 vendor.logo = request.data['logo']
 
-            # Handle cover_photo upload to Cloudinary
-            if 'cover_photo' in request.FILES:
-                from utils.cloudinary_utils import upload_to_cloudinary
-                try:
-                    upload_response = upload_to_cloudinary(
-                        request.FILES['cover_photo'],
-                        folder=f"vendor_covers/{vendor.id}",
-                        resource_type='image'
-                    )
-                    vendor.cover_photo = upload_response['secure_url']
-                except Exception as e:
-                    return Response({
-                        'success': False,
-                        'error': f'Failed to upload cover photo: {str(e)}'
-                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            elif 'cover_photo' in request.data and isinstance(request.data['cover_photo'], str):
-                # Handle Cloudinary URL directly
-                vendor.cover_photo = request.data['cover_photo']
-
-            # Handle cover_image upload to Cloudinary
+            # Handle cover image upload to Cloudinary
             if 'cover_image' in request.FILES:
                 from utils.cloudinary_utils import upload_to_cloudinary
                 try:
@@ -344,6 +325,25 @@ class VendorImageUpdateView(APIView):
             elif 'cover_image' in request.data and isinstance(request.data['cover_image'], str):
                 # Handle Cloudinary URL directly
                 vendor.cover_image = request.data['cover_image']
+
+            # Also handle cover_photo for backward compatibility
+            if 'cover_photo' in request.FILES:
+                from utils.cloudinary_utils import upload_to_cloudinary
+                try:
+                    upload_response = upload_to_cloudinary(
+                        request.FILES['cover_photo'],
+                        folder=f"vendor_covers/{vendor.id}",
+                        resource_type='image'
+                    )
+                    vendor.cover_image = upload_response['secure_url']
+                except Exception as e:
+                    return Response({
+                        'success': False,
+                        'error': f'Failed to upload cover photo: {str(e)}'
+                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            elif 'cover_photo' in request.data and isinstance(request.data['cover_photo'], str):
+                # Handle Cloudinary URL directly
+                vendor.cover_image = request.data['cover_photo']
 
             # Handle bio update
             if 'bio' in request.data:

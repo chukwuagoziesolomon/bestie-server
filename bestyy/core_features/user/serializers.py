@@ -83,7 +83,7 @@ class VendorProfileSerializer(serializers.ModelSerializer):
         model = VendorProfile
         fields = [
             'id', 'user', 'phone', 'business_name', 'business_category', 'cac_number', 
-            'business_description', 'logo', 'business_address', 'delivery_radius', 
+            'business_description', 'logo', 'cover_image', 'business_address', 'delivery_radius', 
             'service_areas', 'opening_hours', 'closing_hours', 'offers_delivery', 
             'verification_status'
         ]

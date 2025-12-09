@@ -181,15 +181,22 @@ GET /api/user/vendors/autocomplete/?q=rice&location=Lagos&food=jollof&min_price=
 ```json
 {
   "success": false,
-  "error": "Account name does not match bank records"
+  "error": "Invalid key"
 }
 ```
 
-**Features:**
-- Validates account details with Paystack API
-- Supports automatic bank code resolution
-- Updates profile with verified bank details
-- Required for vendor/courier verification completion
+**Note:** The "Invalid key" error typically indicates that the Paystack secret key is not configured correctly on the server. This is an environment variable issue, not a problem with your request data.
+
+**Troubleshooting "Invalid key" Error:**
+1. **Check Environment Variables:** Ensure `PAYSTACK_SECRET_KEY` is set correctly in your deployment environment (Render.com dashboard)
+2. **Verify Key Format:** Paystack secret keys start with `sk_` 
+3. **Test Locally First:** The API works correctly locally, so the issue is server-side configuration
+4. **Account Name Matching:** Paystack returns account names in ALL CAPS and different order. The API handles case-insensitive matching, but ensure the name is reasonably similar.
+
+**Bank Code Resolution:**
+- OPay Digital Services Limited (OPay) → Code: `999992`
+- The system automatically resolves bank names to codes
+- If resolution fails, you can manually provide the `bank_code` field
 
 ---
 
