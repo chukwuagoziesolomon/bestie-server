@@ -1258,6 +1258,8 @@ class PendingUser(models.Model):
                                 offers_delivery=self.profile_data.get('offers_delivery', False),
                                 cac_number=self.profile_data.get('cac_number'),
                                 business_description=self.profile_data.get('business_description'),
+                                logo=self.profile_data.get('logo'),
+                                cover_image=self.profile_data.get('cover_photo'),  # Map cover_photo to cover_image
                             )
                             logger.info(f"Successfully created vendor profile for user {existing_user.email}")
                         except Exception as e:
@@ -1402,6 +1404,8 @@ class PendingUser(models.Model):
                                 offers_delivery=self.profile_data.get('offers_delivery', False),
                                 cac_number=self.profile_data.get('cac_number'),
                                 business_description=self.profile_data.get('business_description'),
+                                logo=self.profile_data.get('logo'),
+                                cover_image=self.profile_data.get('cover_photo'),  # Map cover_photo to cover_image
                             )
 
                         elif self.user_type == 'courier':
