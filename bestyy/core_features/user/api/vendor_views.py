@@ -47,23 +47,42 @@ class VendorRegistrationView(generics.CreateAPIView):
             )
         
         try:
-            vendor_profile = serializer.save()
-            
-            # Send WebSocket notification to admins
+            result = serializer.save()
+
+            # If serializer returned a PendingUser placeholder (registration flow), return profile_data
+            # instead of trying to serialize it as a VendorProfile instance.
+            if hasattr(result, 'profile_data') and hasattr(result, 'verification_code'):
+                pending = result
+                # Notify admins that a registration occurred (non-blocking)
+                try:
+                    notify_vendor_registered(pending)
+                except Exception as e:
+                    logger.error(f"Failed to send vendor registration notification: {str(e)}")
+
+                headers = self.get_success_headers(serializer.data)
+                # Flatten profile_data into the top-level response
+                response_data = {
+                    'success': True,
+                    'status': 'pending',
+                    'message': 'Registration received. Please verify your account.',
+                    'verification_code': getattr(pending, 'verification_code', None)
+                }
+                if isinstance(pending.profile_data, dict):
+                    response_data.update(pending.profile_data)
+                else:
+                    response_data['profile_data'] = pending.profile_data
+                return Response(response_data, status=status.HTTP_201_CREATED, headers=headers)
+
+            # Otherwise assume a VendorProfile was created and return serialized vendor profile
+            vendor_profile = result
             try:
                 notify_vendor_registered(vendor_profile)
             except Exception as e:
                 logger.error(f"Failed to send vendor registration notification: {str(e)}")
-            
-            # Get the full serialized data including read-only fields
+
             response_serializer = VendorProfileSerializer(vendor_profile)
-            
             headers = self.get_success_headers(serializer.data)
-            return Response(
-                response_serializer.data,
-                status=status.HTTP_201_CREATED,
-                headers=headers
-            )
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
             
         except Exception as e:
             logger.error(f"Vendor registration failed: {str(e)}")
@@ -92,6 +111,19 @@ class VendorProfileView(generics.RetrieveUpdateAPIView):
         """Override update to handle Cloudinary URLs and file uploads"""
         partial = kwargs.pop('partial', False)
         instance = self.get_object()
+
+        # Check for bank-related fields that require verification
+        bank_fields = ['bank_account_number', 'bank_code', 'bank_name', 'account_number', 'account_name']
+        bank_fields_in_request = [field for field in bank_fields if field in request.data]
+
+        if bank_fields_in_request:
+            return Response({
+                'success': False,
+                'error': 'Bank details cannot be updated directly. Please use the bank verification endpoint: POST /api/user/verification/verify-bank/',
+                'bank_verification_endpoint': '/api/user/verification/verify-bank/',
+                'required_fields': ['account_number', 'account_name', 'bank_name'],
+                'optional_fields': ['bank_code']
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         # Handle Cloudinary URLs (strings) and file uploads
         url_fields = ['logo', 'cover_image', 'cover_photo']

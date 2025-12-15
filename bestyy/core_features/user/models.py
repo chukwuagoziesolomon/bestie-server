@@ -657,6 +657,29 @@ class Cart(models.Model):
         """
         from decimal import Decimal
 
+        # Calculate variant price modifiers
+        modifier_total = Decimal('0')
+        variants_payload = variants or {}
+        if variants_payload:
+            try:
+                from bestyy.restaurant_features.product.models import ProductVariant, ProductVariantOption
+                # variants_payload expected as {"Size":"Large", "Extras":["Extra Cheese"]}
+                for key, val in variants_payload.items():
+                    # Find variant by name for this product
+                    variant_qs = ProductVariant.objects.filter(product=menu_item, name__iexact=str(key))
+                    if not variant_qs.exists():
+                        continue
+                    variant = variant_qs.first()
+                    # Normalize selected options to list
+                    selected = val if isinstance(val, (list, tuple)) else [val]
+                    for opt_name in selected:
+                        opt = variant.options.filter(name__iexact=str(opt_name)).first()
+                        if opt:
+                            modifier_total += Decimal(str(opt.price_modifier))
+            except Exception:
+                # If product variant lookup fails for any reason, ignore modifiers
+                modifier_total = Decimal('0')
+
         # Check if item already exists in cart
         cart_item, created = CartItem.objects.get_or_create(
             cart=self,
@@ -666,6 +689,7 @@ class Cart(models.Model):
                 'base_price': menu_item.price,
                 'variants': variants or {},
                 'special_instructions': special_instructions,
+                'total_price': Decimal(str(menu_item.price + modifier_total)) * quantity,
             }
         )
 
@@ -674,11 +698,12 @@ class Cart(models.Model):
         cart_item.quantity += quantity
         cart_item.variants = variants or cart_item.variants
         cart_item.special_instructions = special_instructions or cart_item.special_instructions
-        cart_item.total_price = Decimal(str(cart_item.base_price)) * cart_item.quantity
+        # Ensure base_price remains the product price; total_price includes modifiers
+        cart_item.total_price = Decimal(str(cart_item.base_price + modifier_total)) * cart_item.quantity
         cart_item.save()
 
-        # Update cart totals
-        self.total_price += (cart_item.base_price * quantity)
+        # Update cart totals (add price for the quantity just added)
+        self.total_price += (Decimal(str(menu_item.price + modifier_total)) * Decimal(str(quantity)))
         self.item_count += quantity
         self.save()
 
@@ -841,7 +866,28 @@ class CartItem(models.Model):
     def save(self, *args, **kwargs):
         # Auto-calculate total price
         from decimal import Decimal
-        self.total_price = Decimal(str(self.base_price)) * self.quantity
+        # If variants present, base_price remains product base; total_price should already be set
+        # but recalc defensively using variants if available
+        modifier_total = Decimal('0')
+        if self.variants:
+            try:
+                from bestyy.restaurant_features.product.models import ProductVariant
+                from decimal import Decimal as _Decimal
+                # variants stored as {variant_name: option or [options]}
+                for key, val in (self.variants or {}).items():
+                    variant_qs = ProductVariant.objects.filter(product=self.menu_item, name__iexact=str(key))
+                    if not variant_qs.exists():
+                        continue
+                    variant = variant_qs.first()
+                    selected = val if isinstance(val, (list, tuple)) else [val]
+                    for opt_name in selected:
+                        opt = variant.options.filter(name__iexact=str(opt_name)).first()
+                        if opt:
+                            modifier_total += _Decimal(str(opt.price_modifier))
+            except Exception:
+                modifier_total = Decimal('0')
+
+        self.total_price = Decimal(str(self.base_price + modifier_total)) * self.quantity
         super().save(*args, **kwargs)
 
 
@@ -1260,6 +1306,8 @@ class PendingUser(models.Model):
                                 business_description=self.profile_data.get('business_description'),
                                 logo=self.profile_data.get('logo'),
                                 cover_image=self.profile_data.get('cover_photo'),  # Map cover_photo to cover_image
+                                opening_hours=self.profile_data.get('opening_hours'),
+                                closing_hours=self.profile_data.get('closing_hours'),
                             )
                             logger.info(f"Successfully created vendor profile for user {existing_user.email}")
                         except Exception as e:
@@ -1406,6 +1454,8 @@ class PendingUser(models.Model):
                                 business_description=self.profile_data.get('business_description'),
                                 logo=self.profile_data.get('logo'),
                                 cover_image=self.profile_data.get('cover_photo'),  # Map cover_photo to cover_image
+                                opening_hours=self.profile_data.get('opening_hours'),
+                                closing_hours=self.profile_data.get('closing_hours'),
                             )
 
                         elif self.user_type == 'courier':

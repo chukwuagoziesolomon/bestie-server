@@ -87,6 +87,7 @@ urlpatterns = [
     # Vendor management (for vendors)
     path('vendors/orders/', vendor_orders.VendorOrdersView.as_view(), name='vendor_orders'),
     path('vendors/menu/', vendor_menu_views.VendorMenuListView.as_view(), name='vendor_menu'),
+    path('vendors/menu/<int:pk>/', vendor_menu_views.VendorMenuDetailView.as_view(), name='vendor_menu_detail'),
     path('vendors/me/', user_views.UserProfileView.as_view(), name='vendor_me'),
     path('vendors/profile/', vendor_views.VendorProfileView.as_view(), name='vendor_profile_me'),  # Get/update vendor profile
     path('vendors/profile/images/', vendor_profile_views.VendorImageUpdateView.as_view(), name='vendor_profile_images'),  # Update vendor logo/cover photos

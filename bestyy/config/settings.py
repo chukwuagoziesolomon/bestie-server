@@ -62,7 +62,7 @@ CORS_PREFLIGHT_MAX_AGE = 86400  # 24 hours
 
 # Debug: Print CORS settings
 print(f"")
-print(f"🔴 CORS HEADERS CONFIGURED 🔴")
+
 print(f"CORS_ALLOW_HEADERS: {CORS_ALLOW_HEADERS}")
 print(f"")
 

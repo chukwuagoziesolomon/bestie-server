@@ -1,0 +1,13 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Check MenuItem vendor in Django shell",
+			"type": "shell",
+			"command": "python manage.py shell -c \"from bestyy.core_features.user.models import MenuItem; item = MenuItem.objects.filter(id=1).first(); print('Exists:', bool(item)); print('Vendor:', getattr(item, 'vendor_id', None))\"",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		}
+	]
+}

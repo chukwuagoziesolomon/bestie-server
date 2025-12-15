@@ -61,12 +61,16 @@ class IsVerifiedVendor(permissions.BasePermission):
     message = _("No vendor profile found. Please register as a vendor first.")
     
     def has_permission(self, request, view):
+        print("DEBUG: IsVerifiedVendor called for user:", request.user)
         if not request.user.is_authenticated:
+            print("DEBUG: User not authenticated")
             self.message = _("Authentication credentials were not provided.")
             return False
         if not hasattr(request.user, 'vendor_profile'):
+            print("DEBUG: User has no vendor_profile")
             self.message = _("No vendor profile found. Please register as a vendor first.")
             return False
+        print("DEBUG: Permission granted for vendor user:", request.user)
         return True
 
 

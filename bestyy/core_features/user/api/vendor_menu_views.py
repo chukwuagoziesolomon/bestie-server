@@ -11,7 +11,7 @@ from django.db.models import Count, Avg
 from rest_framework.permissions import IsAuthenticated
 from bestyy.core_features.user.permissions import IsVerifiedVendor
 
-from bestyy.restaurant_features.product.models import Product as MenuItem, Category
+from bestyy.restaurant_features.product.models import Product as MenuItem, Category, ProductVariant, ProductVariantOption
 from bestyy.core_features.user.models import VendorProfile
 from bestyy.restaurant_features.vendor.models import Vendor
 
@@ -346,6 +346,34 @@ class VendorMenuListView(APIView):
                 menu_item.video = video_url
             menu_item.save()
 
+            # Handle variants/customizations if provided
+            variants_payload = request.data.get('variants') or []
+            for v in variants_payload:
+                try:
+                    options = v.get('options', [])
+                    variant = ProductVariant.objects.create(
+                        product=menu_item,
+                        name=v.get('name', 'Option'),
+                        required=bool(v.get('required', False)),
+                        min_select=int(v.get('min_select', 0) or 0),
+                        max_select=int(v.get('max_select', 1) or 1),
+                        sort_order=int(v.get('sort_order', 0) or 0)
+                    )
+                    for o in options:
+                        # price_modifier may come as string or number
+                        price_mod = o.get('price_modifier', 0)
+                        ProductVariantOption.objects.create(
+                            variant=variant,
+                            name=o.get('name', ''),
+                            price_modifier=price_mod,
+                            is_available=bool(o.get('is_available', True)),
+                            sort_order=int(o.get('sort_order', 0) or 0)
+                        )
+                except Exception:
+                    # Continue creating other variants even if one fails
+                    import logging
+                    logging.getLogger(__name__).exception('Failed to create variant')
+
             return Response({
                 'success': True,
                 'message': 'Menu item created successfully',
@@ -406,32 +434,154 @@ class VendorMenuDetailView(APIView):
     Retrieve, update, or delete a specific menu item
     GET /api/user/vendors/menu/{pk}/ - Get menu item details
     PUT /api/user/vendors/menu/{pk}/ - Update menu item
+    PATCH /api/user/vendors/menu/{pk}/ - Partially update menu item
     DELETE /api/user/vendors/menu/{pk}/ - Delete menu item
     """
     permission_classes = [IsVerifiedVendor]
 
+    def patch(self, request, pk):
+        print(f"DEBUG: Entered VendorMenuDetailView.patch for pk={pk}, user={request.user}")
+        """Partially update menu item"""
+        try:
+            if not hasattr(request.user, 'vendor_profile') or not request.user.vendor_profile:
+                return Response({
+                    'success': False,
+                    'error': 'Vendor profile not found',
+                    'debug': {
+                        'user_id': request.user.id,
+                        'user_email': request.user.email,
+                        'has_vendor_profile': hasattr(request.user, 'vendor_profile'),
+                        'vendor_profile_exists': request.user.vendor_profile if hasattr(request.user, 'vendor_profile') else None
+                    }
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            vendor = request.user.vendor_profile
+            from bestyy.restaurant_features.product.models import Product, Category
+            menu_item = get_object_or_404(Product, id=pk, vendor=vendor)
+
+            # Update only provided fields
+            if 'dish_name' in request.data:
+                menu_item.name = request.data['dish_name']
+            if 'item_description' in request.data:
+                menu_item.description = request.data['item_description']
+            if 'price' in request.data:
+                menu_item.price = request.data['price']
+            if 'category' in request.data:
+                category_name = request.data['category']
+                category, created = Category.objects.get_or_create(
+                    name=category_name,
+                    defaults={'description': f'{category_name} category'}
+                )
+                menu_item.category = category
+            if 'available_now' in request.data:
+                menu_item.is_available = self._parse_boolean(request.data['available_now'])
+            if 'quantity' in request.data:
+                menu_item.stock_quantity = request.data['quantity']
+
+            # Handle image upload to Cloudinary
+            if 'image' in request.FILES:
+                from utils.cloudinary_utils import upload_to_cloudinary
+                try:
+                    upload_response = upload_to_cloudinary(
+                        request.FILES['image'],
+                        folder=f"menu_items/{vendor.id}",
+                        resource_type='image'
+                    )
+                    menu_item.image = upload_response['secure_url']
+                except Exception as e:
+                    return Response({
+                        'success': False,
+                        'error': f'Failed to upload image: {str(e)}'
+                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            elif 'image' in request.data and isinstance(request.data['image'], str):
+                menu_item.image = request.data['image']
+
+            # Handle video upload to Cloudinary
+            if 'video' in request.FILES:
+                from utils.cloudinary_utils import upload_to_cloudinary
+                try:
+                    upload_response = upload_to_cloudinary(
+                        request.FILES['video'],
+                        folder=f"menu_items/{vendor.id}",
+                        resource_type='video'
+                    )
+                    menu_item.video = upload_response['secure_url']
+                except Exception as e:
+                    return Response({
+                        'success': False,
+                        'error': f'Failed to upload video: {str(e)}'
+                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            elif 'video' in request.data and isinstance(request.data['video'], str):
+                menu_item.video = request.data['video']
+
+            menu_item.save()
+
+            return Response({
+                'success': True,
+                'message': 'Menu item updated successfully',
+                'menu_item': {
+                    'id': menu_item.id,
+                    'dish_name': menu_item.name,
+                    'item_description': menu_item.description,
+                    'price': float(menu_item.price),
+                    'category': menu_item.category.name if menu_item.category else None,
+                    'available_now': menu_item.is_available,
+                    'quantity': menu_item.stock_quantity,
+                    'image': self._get_image_url(menu_item.image) if hasattr(menu_item, 'image') else None,
+                    'video': self._get_image_url(menu_item.video) if hasattr(menu_item, 'video') else None,
+                    'updated_at': menu_item.updated_at.isoformat()
+                }
+            })
+
+        except Product.DoesNotExist:
+            vendor = request.user.vendor_profile if hasattr(request.user, 'vendor_profile') and request.user.vendor_profile else None
+            product = Product.objects.filter(id=pk).first()
+            return Response({
+                'success': False,
+                'error': 'Menu item not found',
+                'debug': {
+                    'user_id': request.user.id,
+                    'user_vendor_id': vendor.id if vendor else None,
+                    'product_id': pk,
+                    'product_vendor_id': product.vendor.id if product else None if product else None
+                }
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     def get(self, request, pk):
+        print(f"DEBUG: Entered VendorMenuDetailView.get for pk={pk}, user={request.user}")
         """Get specific menu item"""
         try:
             if not hasattr(request.user, 'vendor_profile') or not request.user.vendor_profile:
                 return Response({
                     'success': False,
-                    'error': 'Vendor profile not found'
+                    'error': 'Vendor profile not found',
+                    'debug': {
+                        'user_id': request.user.id,
+                        'user_email': request.user.email,
+                        'has_vendor_profile': hasattr(request.user, 'vendor_profile'),
+                        'vendor_profile_exists': request.user.vendor_profile if hasattr(request.user, 'vendor_profile') else None
+                    }
                 }, status=status.HTTP_404_NOT_FOUND)
 
             vendor = request.user.vendor_profile
-            menu_item = get_object_or_404(MenuItem, id=pk, vendor=vendor)
+            from bestyy.restaurant_features.product.models import Product
+            menu_item = get_object_or_404(Product, id=pk, vendor=vendor)
 
             return Response({
                 'success': True,
                 'menu_item': {
                     'id': menu_item.id,
-                    'dish_name': menu_item.dish_name,
-                    'item_description': menu_item.item_description,
+                    'dish_name': menu_item.name,
+                    'item_description': menu_item.description,
                     'price': float(menu_item.price),
                     'category': menu_item.category.name if menu_item.category else None,
-                    'available_now': menu_item.available_now,
-                    'quantity': menu_item.quantity,
+                    'available_now': menu_item.is_available,
+                    'quantity': menu_item.stock_quantity,
                     'image': self._get_image_url(menu_item.image) if hasattr(menu_item, 'image') else None,
                     'video': self._get_image_url(menu_item.video) if hasattr(menu_item, 'video') else None,
                     'created_at': menu_item.created_at.isoformat(),
@@ -439,10 +589,19 @@ class VendorMenuDetailView(APIView):
                 }
             })
 
-        except MenuItem.DoesNotExist:
+        except Exception as e:
+            vendor = request.user.vendor_profile if hasattr(request.user, 'vendor_profile') and request.user.vendor_profile else None
+            from bestyy.restaurant_features.product.models import Product
+            product = Product.objects.filter(id=pk).first()
             return Response({
                 'success': False,
-                'error': 'Menu item not found'
+                'error': str(e),
+                'debug': {
+                    'user_id': request.user.id,
+                    'user_vendor_id': vendor.id if vendor else None,
+                    'product_id': pk,
+                    'product_vendor_id': product.vendor.id if product else None if product else None
+                }
             }, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({
@@ -451,16 +610,24 @@ class VendorMenuDetailView(APIView):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def put(self, request, pk):
+        print(f"DEBUG: Entered VendorMenuDetailView.put for pk={pk}, user={request.user}")
         """Update menu item"""
         try:
             if not hasattr(request.user, 'vendor_profile') or not request.user.vendor_profile:
                 return Response({
                     'success': False,
-                    'error': 'Vendor profile not found'
+                    'error': 'Vendor profile not found',
+                    'debug': {
+                        'user_id': request.user.id,
+                        'user_email': request.user.email,
+                        'has_vendor_profile': hasattr(request.user, 'vendor_profile'),
+                        'vendor_profile_exists': request.user.vendor_profile if hasattr(request.user, 'vendor_profile') else None
+                    }
                 }, status=status.HTTP_404_NOT_FOUND)
 
             vendor = request.user.vendor_profile
-            menu_item = get_object_or_404(MenuItem, id=pk, vendor=vendor)
+            from bestyy.restaurant_features.product.models import Product
+            menu_item = get_object_or_404(Product, id=pk, vendor=vendor)
 
             # Update fields
             if 'dish_name' in request.data:
@@ -540,9 +707,17 @@ class VendorMenuDetailView(APIView):
             })
 
         except MenuItem.DoesNotExist:
+            vendor = request.user.vendor_profile if hasattr(request.user, 'vendor_profile') and request.user.vendor_profile else None
+            product = MenuItem.objects.filter(id=pk).first()
             return Response({
                 'success': False,
-                'error': 'Menu item not found'
+                'error': 'Menu item not found',
+                'debug': {
+                    'user_id': request.user.id,
+                    'user_vendor_id': vendor.id if vendor else None,
+                    'product_id': pk,
+                    'product_vendor_id': product.vendor.id if product else None
+                }
             }, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({
@@ -551,16 +726,25 @@ class VendorMenuDetailView(APIView):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def delete(self, request, pk):
+        print(f"DEBUG: Entered VendorMenuDetailView.delete for pk={pk}, user={request.user}, vendor_profile_id={getattr(getattr(request.user, 'vendor_profile', None), 'id', None)}")
+        print(f"DEBUG: Entered VendorMenuDetailView.delete for pk={pk}, user={request.user}")
         """Delete menu item"""
         try:
             if not hasattr(request.user, 'vendor_profile') or not request.user.vendor_profile:
                 return Response({
                     'success': False,
-                    'error': 'Vendor profile not found'
+                    'error': 'Vendor profile not found',
+                    'debug': {
+                        'user_id': request.user.id,
+                        'user_email': request.user.email,
+                        'has_vendor_profile': hasattr(request.user, 'vendor_profile'),
+                        'vendor_profile_exists': request.user.vendor_profile if hasattr(request.user, 'vendor_profile') else None
+                    }
                 }, status=status.HTTP_404_NOT_FOUND)
 
             vendor = request.user.vendor_profile
-            menu_item = get_object_or_404(MenuItem, id=pk, vendor=vendor)
+            from bestyy.restaurant_features.product.models import Product
+            menu_item = get_object_or_404(Product, id=pk, vendor=vendor)
 
             menu_item.delete()
 
@@ -569,10 +753,19 @@ class VendorMenuDetailView(APIView):
                 'message': 'Menu item deleted successfully'
             })
 
-        except MenuItem.DoesNotExist:
+        except Exception as e:
+            vendor = request.user.vendor_profile if hasattr(request.user, 'vendor_profile') and request.user.vendor_profile else None
+            from bestyy.restaurant_features.product.models import Product
+            product = Product.objects.filter(id=pk).first()
             return Response({
                 'success': False,
-                'error': 'Menu item not found'
+                'error': str(e),
+                'debug': {
+                    'user_id': request.user.id,
+                    'user_vendor_id': vendor.id if vendor else None,
+                    'product_id': pk,
+                    'product_vendor_id': product.vendor.id if product else None if product else None
+                }
             }, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({
@@ -598,6 +791,12 @@ class VendorMenuDetailView(APIView):
             except Exception:
                 pass
         return None
+
+    def _parse_boolean(self, value):
+        """Parse boolean value from string or return as is"""
+        if isinstance(value, str):
+            return value.lower() == 'true'
+        return bool(value)
 
 
 class VendorMenuCategoriesView(APIView):

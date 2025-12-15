@@ -92,8 +92,35 @@ class OrderSummaryView(APIView):
                     'error': 'Cart contains items from multiple vendors'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-            # Calculate subtotal
-            subtotal = sum(float(mi.price) * quantities_by_id.get(mi.pk, 0) for mi in menu_items)
+            # Calculate subtotal including variant option modifiers
+            from decimal import Decimal
+            subtotal = Decimal('0')
+            # menu_items is a list of Product objects
+            for mi in menu_items:
+                qty = quantities_by_id.get(mi.pk, 0)
+                # find the corresponding payload entry for variants (if any)
+                payload_item = next((it for it in cart_items if int(it.get('menu_item_id')) == mi.pk), {})
+                variants_payload = payload_item.get('variants') or {}
+
+                # sum modifiers
+                modifier_total = Decimal('0')
+                if variants_payload:
+                    try:
+                        from bestyy.restaurant_features.product.models import ProductVariant
+                        for key, val in variants_payload.items():
+                            variant_qs = ProductVariant.objects.filter(product=mi, name__iexact=str(key))
+                            if not variant_qs.exists():
+                                continue
+                            variant = variant_qs.first()
+                            selected = val if isinstance(val, (list, tuple)) else [val]
+                            for opt_name in selected:
+                                opt = variant.options.filter(name__iexact=str(opt_name)).first()
+                                if opt:
+                                    modifier_total += Decimal(str(opt.price_modifier))
+                    except Exception:
+                        modifier_total = Decimal('0')
+
+                subtotal += (Decimal(str(mi.price)) + modifier_total) * Decimal(str(qty))
 
             # Calculate delivery fee based on distance
             maps_service = GoogleMapsService()
@@ -112,23 +139,58 @@ class OrderSummaryView(APIView):
                 distance_text = "Unknown"
 
             # Calculate platform fee (5% of subtotal)
-            platform_fee = subtotal * 0.05
+            platform_fee = float(subtotal) * 0.05
+
+            # Convert subtotal to float for response
+            subtotal = float(subtotal)
 
             # Calculate grand total
             grand_total = subtotal + delivery_fee + platform_fee
 
-            # Prepare item breakdown
+            # Prepare item breakdown (include selected variants and option modifiers)
             items_breakdown = []
             for menu_item in menu_items:
                 qty = quantities_by_id.get(menu_item.pk, 0)
-                if qty > 0:
-                    items_breakdown.append({
-                        'id': menu_item.pk,
-                        'name': getattr(menu_item, 'dish_name', menu_item.name),
-                        'price': float(menu_item.price),
-                        'quantity': qty,
-                        'total': float(menu_item.price) * qty
-                    })
+                if qty <= 0:
+                    continue
+                payload_item = next((it for it in cart_items if int(it.get('menu_item_id')) == menu_item.pk), {})
+                variants_payload = payload_item.get('variants') or {}
+
+                # compute modifier total per unit
+                from decimal import Decimal
+                modifier_total = Decimal('0')
+                variant_details = []
+                if variants_payload:
+                    try:
+                        from bestyy.restaurant_features.product.models import ProductVariant
+                        for key, val in variants_payload.items():
+                            variant_qs = ProductVariant.objects.filter(product=menu_item, name__iexact=str(key))
+                            if not variant_qs.exists():
+                                continue
+                            variant = variant_qs.first()
+                            selected = val if isinstance(val, (list, tuple)) else [val]
+                            selected_options = []
+                            for opt_name in selected:
+                                opt = variant.options.filter(name__iexact=str(opt_name)).first()
+                                if opt:
+                                    modifier_total += Decimal(str(opt.price_modifier))
+                                    selected_options.append({'name': opt.name, 'price_modifier': float(opt.price_modifier)})
+                            variant_details.append({'variant': variant.name, 'selected_options': selected_options})
+                    except Exception:
+                        modifier_total = Decimal('0')
+
+                unit_price = float(menu_item.price) + float(modifier_total)
+                total_price = unit_price * qty
+
+                items_breakdown.append({
+                    'id': menu_item.pk,
+                    'name': getattr(menu_item, 'dish_name', menu_item.name),
+                    'price': float(menu_item.price),
+                    'quantity': qty,
+                    'variants': variant_details,
+                    'variant_modifier_per_unit': float(modifier_total),
+                    'total': round(total_price, 2)
+                })
 
             return Response({
                 'success': True,
