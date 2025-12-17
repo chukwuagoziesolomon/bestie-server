@@ -330,6 +330,7 @@ else:
         'http://127.0.0.1:8000',
         'https://bestie-admin.vercel.app',  # Production admin frontend
         'https://bestyy-web.vercel.app',  # Production customer frontend
+        'https://www.bestyyexpress.com',  # Added custom domain
     ]
     print(f"Using default CORS_ALLOWED_ORIGINS: {CORS_ALLOWED_ORIGINS}")
 
